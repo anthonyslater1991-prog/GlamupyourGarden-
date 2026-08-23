@@ -108,6 +108,11 @@ Garden makeover app: users photograph their garden, choose changes, and generate
 - Verified live in preview (banner renders, How modal shows steps). Named app tile designed with brand font.
 - Reminder: this install UX only appears on the HOSTED WEB (PWA) build. Getting a customer-facing installable URL requires a Web/Full-Stack web deployment (mobile/Expo-Go deploy does not become a browser-installable PWA) — per Emergent support.
 
+## Implemented (2026-06 fork) — iteration 13: Share this app
+- Profile now has "Share this app" (share-app) + "Show QR code" (share-qr). Share uses native share sheet on devices (RN Share), navigator.share on supporting web browsers, and clipboard copy fallback otherwise — always with a friendly message + install link.
+- Install/QR link fixed to the real app URL: web uses window.location.origin; native uses EXPO_PUBLIC_APP_URL (prod https://outdoor-uplift.emergent.host) fallback. (Previously pointed at the backend URL.)
+- Verified: tapping Share copies "🌿 Check out Glam up your Garden … Save it to your home screen: <url>".
+
 ## Backlog
 ### P1
 - Real member-to-member messaging + community chat room (opt-out aware)

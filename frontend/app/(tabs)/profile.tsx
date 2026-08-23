@@ -10,6 +10,7 @@ import {
   TextInput,
   ActivityIndicator,
   Platform,
+  Share,
 } from "react-native";
 import { Image } from "expo-image";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
@@ -23,7 +24,13 @@ import { useToast } from "@/src/components/Toast";
 import { apiFetch } from "@/src/lib/api";
 import { colors, spacing, radius, fonts } from "@/src/theme";
 
-const APP_URL = process.env.EXPO_PUBLIC_BACKEND_URL || "https://glamupyourgarden.app";
+const APP_URL =
+  (typeof window !== "undefined" && window.location?.origin) ||
+  process.env.EXPO_PUBLIC_APP_URL ||
+  "https://outdoor-uplift.emergent.host";
+
+const SHARE_MESSAGE =
+  `🌿 Check out Glam up your Garden — redesign your garden with AI, shop the look & book trusted contractors. Save it to your home screen: ${APP_URL}`;
 
 export default function Profile() {
   const insets = useSafeAreaInsets();
@@ -69,6 +76,24 @@ export default function Profile() {
     toast.show("App link copied! 🔗", "success");
   };
 
+  const shareApp = async () => {
+    try {
+      if (Platform.OS === "web") {
+        const nav: any = typeof navigator !== "undefined" ? navigator : null;
+        if (nav?.share) {
+          await nav.share({ title: "Glam up your Garden", text: SHARE_MESSAGE, url: APP_URL });
+        } else {
+          await Clipboard.setStringAsync(SHARE_MESSAGE);
+          toast.show("Share message copied — paste it anywhere! 🔗", "success");
+        }
+      } else {
+        await Share.share({ message: SHARE_MESSAGE, url: APP_URL, title: "Glam up your Garden" });
+      }
+    } catch {
+      // user cancelled the share sheet — ignore
+    }
+  };
+
   return (
     <View style={styles.root}>
       <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={{ paddingBottom: 120 }}>
@@ -107,7 +132,8 @@ export default function Profile() {
 
         <View style={styles.section}>
           <Row icon="edit-2" label="Edit my details" onPress={() => setBioOpen(true)} testID="edit-bio" />
-          <Row icon="share-2" label="Share app (QR code)" onPress={() => setQrOpen(true)} testID="share-qr" />
+          <Row icon="share-2" label="Share this app" onPress={shareApp} testID="share-app" />
+          <Row icon="maximize" label="Show QR code" onPress={() => setQrOpen(true)} testID="share-qr" />
           <View style={styles.row}>
             <View style={styles.rowLeft}>
               <View style={styles.rowIcon}><Feather name="message-square" size={17} color={colors.brand} /></View>
@@ -176,6 +202,10 @@ export default function Profile() {
             <Pressable testID="copy-link-button" style={styles.copyBtn} onPress={copyLink}>
               <Feather name="copy" size={16} color="#fff" />
               <Text style={styles.copyText}>Copy link</Text>
+            </Pressable>
+            <Pressable testID="share-app-modal" style={styles.shareOutlineBtn} onPress={shareApp}>
+              <Feather name="share-2" size={16} color={colors.brand} />
+              <Text style={styles.shareOutlineText}>Share this app</Text>
             </Pressable>
           </View>
         </View>
@@ -282,6 +312,8 @@ const styles = StyleSheet.create({
   qrBox: { padding: spacing.lg, backgroundColor: "#fff", borderRadius: radius.md },
   copyBtn: { flexDirection: "row", alignItems: "center", justifyContent: "center", gap: spacing.sm, backgroundColor: colors.brand, height: 50, borderRadius: radius.md, paddingHorizontal: spacing.xl, alignSelf: "stretch" },
   copyText: { color: "#fff", fontFamily: fonts.text, fontWeight: "700", fontSize: 15 },
+  shareOutlineBtn: { flexDirection: "row", alignItems: "center", justifyContent: "center", gap: spacing.sm, borderWidth: 1.5, borderColor: colors.brand, height: 50, borderRadius: radius.md, paddingHorizontal: spacing.xl, alignSelf: "stretch" },
+  shareOutlineText: { color: colors.brand, fontFamily: fonts.text, fontWeight: "700", fontSize: 15 },
   bioRoot: { flex: 1, justifyContent: "flex-end" },
   modalBackdrop: { ...StyleSheet.absoluteFillObject, backgroundColor: "rgba(42,54,46,0.5)" },
   sheet: { backgroundColor: colors.surfaceSecondary, borderTopLeftRadius: radius.lg, borderTopRightRadius: radius.lg, padding: spacing.xl, gap: spacing.md },
