@@ -101,3 +101,82 @@
 #====================================================================================================
 # Testing Data - Main Agent and testing sub agent both should log testing data below this section
 #====================================================================================================
+## user_problem_statement: "Automated contractor contracts (auto-drafted, discuss, e-sign by both parties) + job completion tracker. Contract must have all relevant info to protect both parties but be easy/hassle-free to complete."
+
+## backend:
+##   - task: "Contracts API (create/list/get/update/sign/message/stage)"
+##     implemented: true
+##     working: "NA"
+##     file: "backend/server.py"
+##     stuck_count: 0
+##     priority: "high"
+##     needs_retesting: true
+##     status_history:
+##         -working: "NA"
+##         -agent: "main"
+##         -comment: "Added contract models + endpoints: POST /api/contracts (auto-draft w/ 9 standard clauses + 5 job stages), GET /api/contracts, GET /api/contracts/{id}, PUT /api/contracts/{id} (blocks edit when fully signed, resets signatures on edit), POST /api/contracts/{id}/sign (customer side by creator, contractor side by contractor/admin role; both signed -> status active + stage 1 auto-done), POST /api/contracts/{id}/messages (discussion), POST /api/contracts/{id}/stage (contractor/admin only; marks progress; last stage -> completed). Curl-tested full flow OK: draft->cust sign->admin(pro) sign->active->stage update->completed path, edit-after-sign returns 400."
+
+## frontend:
+##   - task: "Contract screen + job tracker + contractor draft flow"
+##     implemented: true
+##     working: "NA"
+##     file: "frontend/app/contract/[id].tsx, frontend/app/contracts/index.tsx, frontend/app/contractor/[id].tsx, frontend/app/(tabs)/projects.tsx"
+##     stuck_count: 0
+##     priority: "high"
+##     needs_retesting: true
+##     status_history:
+##         -working: "NA"
+##         -agent: "main"
+##         -comment: "Contractor detail: 'Draft an agreement' (testID draft-contract) opens project chooser -> creates contract -> navigates to /contract/[id]. Contract screen shows parties, editable terms (edit-terms, save-terms), collapsible standard clauses, dual signature boxes (open-sign, sign-name-input, confirm-sign), job tracker (stage-{i}, contractor/admin tappable) once both signed, and a discussion thread (contract-chat-input, contract-send). My Agreements list at /contracts (open-agreements on Projects tab, my-agreements on contractor screen)."
+
+## metadata:
+##   created_by: "main_agent"
+##   version: "1.0"
+##   test_sequence: 6
+
+## test_plan:
+##   current_focus:
+##     - "Contracts API (create/list/get/update/sign/message/stage)"
+##     - "Contract screen + job tracker + contractor draft flow"
+##   stuck_tasks: []
+##   test_all: false
+##   test_priority: "current_focus"
+
+## agent_communication:
+##     -agent: "main"
+##     -message: "Please E2E test the new Contract + Job Tracker feature (backend + frontend). Customer: garden_test@example.com/secret123 signs the customer side; Admin: admin@glamgarden.app/GlamAdmin2026! signs the contractor side and updates job stages. Verify: draft creation from contractor screen, editing terms resets signatures, dual e-sign flips status draft->awaiting_signatures->active, job tracker appears only after both sign and only contractor/admin can update stages (last stage -> completed), discussion messages persist, and access control (a random second customer cannot open someone else's contract)."
+
+## --- Iteration 7 additions (reviews w/ photos + legal pages) ---
+## backend:
+##   - task: "Contractor reviews accept & return image_paths"
+##     implemented: true
+##     working: true
+##     file: "backend/server.py"
+##     needs_retesting: false
+##     status_history:
+##         -working: true
+##         -agent: "main"
+##         -comment: "ReviewCreate now has image_paths (max 6 stored). POST /contractors/{id}/reviews persists and returns image_paths; GET /contractors/{id} returns them. Curl-verified."
+## frontend:
+##   - task: "Review modal photo upload + review card photo thumbnails + zoom"
+##     implemented: true
+##     working: "NA"
+##     file: "frontend/app/contractor/[id].tsx"
+##     needs_retesting: true
+##     status_history:
+##         -working: "NA"
+##         -agent: "main"
+##         -comment: "Review modal has add-review-photo (uploads via pickFromLibrary), thumbnails with remove; review cards show horizontal photo strip (review-photo-{id}) opening ImageViewer. NOTE: native gallery picker may not be automatable on web — please at least verify a review WITH photos (seeded via API) renders thumbnails and opens the zoom viewer, and that submitting a text review still works."
+##   - task: "Legal pages (Terms, Privacy/Data Protection, Safety)"
+##     implemented: true
+##     working: "NA"
+##     file: "frontend/app/legal/[doc].tsx, frontend/app/(tabs)/profile.tsx"
+##     needs_retesting: true
+##     status_history:
+##         -working: "NA"
+##         -agent: "main"
+##         -comment: "Profile rows (testID terms/privacy/safety) now navigate to /legal/terms, /legal/privacy, /legal/safety which render full content. Verify each opens and shows sections + back works."
+
+## agent_communication:
+##     -agent: "main"
+##     -message: "Iteration 7: Please FRONTEND-test (1) Reviews with photos on a contractor profile — a review with photos already exists via API on the first contractor; verify thumbnails render and tapping opens the zoom viewer, and that posting a normal text review still works (photo picker itself may not be automatable on web, that's OK). (2) Legal pages open from Profile > Legal & Safety (terms/privacy/safety) and render content with working back button. Also quick-confirm the EXISTING admin counters (stat-now/stat-users-5m/stat-1h/stat-24h on /admin) and home social links (social-fb/ig/tt/yt) + QR share (share-qr on Profile) still work. Creds: customer garden_test@example.com/secret123, admin admin@glamgarden.app/GlamAdmin2026!"

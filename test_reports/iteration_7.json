@@ -1,0 +1,42 @@
+{
+  "summary": "Frontend smoke test for reviews-with-photos, legal pages, and regression on admin counters, home social links, visit counter, and QR share. All requested flows PASS. Only one non-blocking issue found: direct deep-link to /admin URL race-conditions with token load causing 401 (works fine when navigated via Profile > Admin Dashboard).",
+  "backend_issues": {
+    "critical": [],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [
+      {
+        "component": "app/admin/index.tsx",
+        "issue": "Race condition: load() useEffect fires on mount and calls /admin/overview before AuthContext restores memToken from AsyncStorage on a cold page load. Direct deep-link to /admin returns 401 and spinner never resolves. In-app navigation (Profile > Admin Dashboard) works because user/token are already loaded. Fix: gate load() on `user?.role === 'admin'` and add `user` to the effect deps.",
+        "testID": "stat-now/stat-users-5m/stat-1h/stat-24h",
+        "priority": "MEDIUM"
+      }
+    ],
+    "integration_issues": [],
+    "design_issues": [
+      {
+        "screen": "Home",
+        "issues": [
+          "Weekly Poll modal appears on top of home content on every session and blocks tab bar hits until manually dismissed via poll-close. Consider showing at most once per week (respect voted state) or lower z-index so bottom tabs remain clickable."
+        ]
+      }
+    ],
+    "react_native_issues": []
+  },
+  "test_report_links": ["/app/test_reports/iteration_7.json"],
+  "action_items": [
+    "OPTIONAL: In app/admin/index.tsx, guard load() with `if (!user || user.role !== 'admin') return;` and add `user` to the useEffect dep array so /admin deep-links work after cold start. Not blocking for typical in-app navigation.",
+    "OPTIONAL: Poll modal should skip re-opening once user has voted or dismissed within the same week (persist state)."
+  ],
+  "critical_code_review_comments": [
+    "AsyncStorage on web goes through IndexedDB; ensure any auth-gated screen either waits for auth boot or guards its initial fetch on `user` being populated (same pattern applies to any admin/*-only screens)."
+  ],
+  "updated_files": [],
+  "success_rate": {"backend": "N/A (not requested)", "frontend": "100% (all requested flows pass)"},
+  "seed_data_creation": "Posted one automation review on GreenThumb Landscapes (rating 4, text 'Automation test review — great work!') during Test 2. This bumped review_count from 3 to 4 and rating to 4.8. Consider cleanup if desired.",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "The 'first' contractor visually is Blossom & Bee Gardens (0 reviews). The seeded review-with-photos actually lives on GreenThumb Landscapes (con_b30ed2c5a59d). Use that contractor for review-photo tests. Also: after login the Weekly Poll modal blocks tab bar taps; close via `[data-testid=\"poll-close\"]` before navigating.",
+  "rca_of_issue": "Admin deep-link 401: apiFetch attaches Authorization only if in-memory memToken is set. On a full page load, memToken is reset to null and rehydrated asynchronously by AuthContext.checkExisting -> loadToken(). AdminDashboard's initial useEffect runs load() immediately, racing ahead of loadToken(), so /admin/overview is called without Authorization header. Fix by guarding on `user` (which is only populated after loadToken + /auth/me) or awaiting loadToken() before any fetches."
+}

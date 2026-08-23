@@ -52,6 +52,12 @@ export default function Projects() {
         </Pressable>
       </View>
 
+      <Pressable testID="open-agreements" style={styles.agreementsRow} onPress={() => router.push("/contracts")}>
+        <Feather name="file-text" size={16} color={colors.brand} />
+        <Text style={styles.agreementsText}>My agreements</Text>
+        <Feather name="chevron-right" size={16} color={colors.muted} />
+      </Pressable>
+
       <FlatList
         data={projects}
         keyExtractor={(i) => i.id}
@@ -139,6 +145,8 @@ const styles = StyleSheet.create({
   },
   badgeText: { color: "#fff", fontFamily: fonts.text, fontWeight: "800", fontSize: 11 },
   cardTitle: { fontFamily: fonts.text, fontWeight: "700", color: colors.onSurface },
+  agreementsRow: { flexDirection: "row", alignItems: "center", gap: spacing.sm, marginHorizontal: spacing.lg, marginBottom: spacing.sm, backgroundColor: colors.surfaceSecondary, borderWidth: 1, borderColor: colors.border, borderRadius: radius.md, paddingVertical: spacing.md, paddingHorizontal: spacing.lg },
+  agreementsText: { flex: 1, fontFamily: fonts.text, fontWeight: "700", color: colors.onSurface, fontSize: 14 },
   empty: { alignItems: "center", padding: spacing.xl, marginTop: spacing["3xl"], gap: spacing.sm },
   emptyEmoji: { fontSize: 44 },
   emptyTitle: { fontFamily: fonts.display, fontSize: 22, color: colors.onSurface },

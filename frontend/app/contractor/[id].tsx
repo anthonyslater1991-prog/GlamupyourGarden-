@@ -18,22 +18,16 @@ import { Feather } from "@expo/vector-icons";
 import { KeyboardAvoidingView } from "react-native-keyboard-controller";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import * as Haptics from "expo-haptics";
-import { apiFetch } from "@/src/lib/api";
+import { apiFetch, fileUrl } from "@/src/lib/api";
+import { uploadImage, pickFromLibrary } from "@/src/lib/upload";
+import ImageViewer from "@/src/components/ImageViewer";
 import { useAuth } from "@/src/context/AuthContext";
 import { useToast } from "@/src/components/Toast";
 import { colors, spacing, radius, fonts } from "@/src/theme";
 
 type Contractor = { id: string; name: string; tagline: string; services: string[]; phone: string; rating: number; review_count: number; location: string; image: string; coverage_miles?: number };
-type Review = { id: string; author_name: string; rating: number; text: string };
-
-const CONTRACT_TERMS = [
-  { label: "Scope of work", value: "Full garden landscaping as discussed in project" },
-  { label: "Estimated price", value: "£2,400 (materials + labour)" },
-  { label: "Timeline", value: "3–4 weeks from start date" },
-  { label: "Payment terms", value: "30% deposit, balance on completion" },
-];
-
-const JOB_STAGES = ["Quote agreed", "Materials ordered", "Groundwork", "Planting & build", "Complete"];
+type Review = { id: string; author_name: string; rating: number; text: string; image_paths?: string[] };
+type Project = { id: string; title: string };
 
 export default function ContractorDetail() {
   const { id } = useLocalSearchParams<{ id: string }>();
@@ -45,11 +39,16 @@ export default function ContractorDetail() {
   const [data, setData] = useState<Contractor | null>(null);
   const [reviews, setReviews] = useState<Review[]>([]);
   const [reviewOpen, setReviewOpen] = useState(false);
-  const [contractOpen, setContractOpen] = useState(false);
+  const [projectPickOpen, setProjectPickOpen] = useState(false);
+  const [projects, setProjects] = useState<Project[]>([]);
+  const [creatingContract, setCreatingContract] = useState(false);
   const [coverageOpen, setCoverageOpen] = useState(false);
   const [coverageVal, setCoverageVal] = useState("25");
   const [rating, setRating] = useState(5);
   const [text, setText] = useState("");
+  const [reviewPhotos, setReviewPhotos] = useState<string[]>([]);
+  const [uploadingPhoto, setUploadingPhoto] = useState(false);
+  const [viewerUri, setViewerUri] = useState<string | undefined>(undefined);
   const [submitting, setSubmitting] = useState(false);
 
   const canEditCoverage = user?.role === "admin" || user?.role === "contractor";
@@ -70,6 +69,28 @@ export default function ContractorDetail() {
     }
   };
 
+  const openDraft = async () => {
+    try {
+      const p = await apiFetch<{ projects: Project[] }>("/projects");
+      setProjects(p.projects || []);
+    } catch { setProjects([]); }
+    setProjectPickOpen(true);
+  };
+
+  const createContract = async (projectId?: string) => {
+    setCreatingContract(true);
+    try {
+      const r = await apiFetch<{ contract: { id: string } }>("/contracts", {
+        method: "POST",
+        body: { contractor_id: id, project_id: projectId || null },
+      });
+      setProjectPickOpen(false);
+      router.push(`/contract/${r.contract.id}`);
+    } catch (e: any) {
+      toast.show(e.message, "error");
+    } finally { setCreatingContract(false); }
+  };
+
   const load = useCallback(async () => {
     try {
       const r = await apiFetch<{ contractor: Contractor; reviews: Review[] }>(`/contractors/${id}`);
@@ -82,6 +103,19 @@ export default function ContractorDetail() {
 
   useEffect(() => { load(); }, [load]);
 
+  const addReviewPhoto = async () => {
+    if (reviewPhotos.length >= 6) { toast.show("Up to 6 photos", "error"); return; }
+    const uri = await pickFromLibrary();
+    if (!uri) return;
+    setUploadingPhoto(true);
+    try {
+      const path = await uploadImage(uri);
+      setReviewPhotos((p) => [...p, path]);
+    } catch {
+      toast.show("Photo upload failed", "error");
+    } finally { setUploadingPhoto(false); }
+  };
+
   const submitReview = async () => {
     if (!text.trim()) {
       toast.show("Write a few words about the work", "error");
@@ -89,9 +123,10 @@ export default function ContractorDetail() {
     }
     setSubmitting(true);
     try {
-      await apiFetch(`/contractors/${id}/reviews`, { method: "POST", body: { rating, text: text.trim() } });
+      await apiFetch(`/contractors/${id}/reviews`, { method: "POST", body: { rating, text: text.trim(), image_paths: reviewPhotos } });
       setText("");
       setRating(5);
+      setReviewPhotos([]);
       setReviewOpen(false);
       toast.show("Review posted — thank you! 🌟", "success");
       load();
@@ -170,34 +205,19 @@ export default function ContractorDetail() {
             )}
           </View>
 
-          {/* Job completion tracker */}
-          <Text style={styles.sectionTitle}>Job progress 🌱</Text>
-          <View style={styles.card}>
-            <View style={styles.progressBarBg}>
-              <View style={[styles.progressBarFill, { width: "60%" }]} />
-            </View>
-            <Text style={styles.progressLabel}>Stage 3 of 5 · Groundwork underway</Text>
-            <View style={styles.stagesRow}>
-              {JOB_STAGES.map((stage, i) => (
-                <View key={stage} style={styles.stageItem}>
-                  <View style={[styles.stageDot, i <= 2 && styles.stageDotDone]}>
-                    {i <= 2 && <Feather name="check" size={10} color="#fff" />}
-                  </View>
-                  <Text style={styles.stageText} numberOfLines={2}>{stage}</Text>
-                </View>
-              ))}
-            </View>
-          </View>
-
-          {/* Contract */}
-          <Text style={styles.sectionTitle}>Contract</Text>
-          <Pressable testID="view-contract" style={styles.contractCard} onPress={() => setContractOpen(true)}>
+          {/* Agreement + Job tracker */}
+          <Text style={styles.sectionTitle}>Agreement & job tracker</Text>
+          <Pressable testID="draft-contract" style={styles.contractCard} onPress={openDraft}>
             <View style={styles.contractIcon}><Feather name="file-text" size={20} color={colors.brand} /></View>
             <View style={{ flex: 1 }}>
-              <Text style={styles.contractTitle}>Auto-drafted agreement</Text>
-              <Text style={styles.contractSub}>Review price, scope & sign digitally</Text>
+              <Text style={styles.contractTitle}>Draft an agreement</Text>
+              <Text style={styles.contractSub}>Auto-filled scope, price & timeline · discuss, sign & track the job</Text>
             </View>
             <Feather name="chevron-right" size={20} color={colors.muted} />
+          </Pressable>
+          <Pressable testID="my-agreements" style={styles.linkRow} onPress={() => router.push("/contracts")}>
+            <Feather name="folder" size={15} color={colors.brand} />
+            <Text style={styles.linkText}>View my agreements</Text>
           </Pressable>
 
           {/* Reviews */}
@@ -223,6 +243,15 @@ export default function ContractorDetail() {
                   </View>
                 </View>
                 <Text style={styles.reviewText}>{r.text}</Text>
+                {!!r.image_paths?.length && (
+                  <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: spacing.sm, marginTop: spacing.xs }}>
+                    {r.image_paths.map((p) => (
+                      <Pressable key={p} testID={`review-photo-${r.id}`} onPress={() => setViewerUri(fileUrl(p))}>
+                        <Image source={{ uri: fileUrl(p) }} style={styles.reviewPhoto} contentFit="cover" />
+                      </Pressable>
+                    ))}
+                  </ScrollView>
+                )}
               </View>
             ))
           )}
@@ -259,6 +288,21 @@ export default function ContractorDetail() {
               onChangeText={setText}
               multiline
             />
+            <View style={styles.photoStrip}>
+              {reviewPhotos.map((p) => (
+                <View key={p} style={styles.thumbWrap}>
+                  <Image source={{ uri: fileUrl(p) }} style={styles.thumb} contentFit="cover" />
+                  <Pressable testID={`remove-photo-${p}`} style={styles.thumbRemove} onPress={() => setReviewPhotos((arr) => arr.filter((x) => x !== p))}>
+                    <Feather name="x" size={12} color="#fff" />
+                  </Pressable>
+                </View>
+              ))}
+              {reviewPhotos.length < 6 && (
+                <Pressable testID="add-review-photo" style={styles.addPhoto} onPress={addReviewPhoto} disabled={uploadingPhoto}>
+                  {uploadingPhoto ? <ActivityIndicator color={colors.brand} /> : <Feather name="camera" size={20} color={colors.brand} />}
+                </Pressable>
+              )}
+            </View>
             <Pressable testID="submit-review-button" style={styles.submitBtn} onPress={submitReview} disabled={submitting}>
               {submitting ? <ActivityIndicator color="#fff" /> : <Text style={styles.submitText}>Post Review</Text>}
             </Pressable>
@@ -266,22 +310,33 @@ export default function ContractorDetail() {
         </KeyboardAvoidingView>
       </Modal>
 
-      {/* Contract modal */}
-      <Modal visible={contractOpen} transparent animationType="slide" onRequestClose={() => setContractOpen(false)}>
+      {/* Draft-contract project chooser */}
+      <Modal visible={projectPickOpen} transparent animationType="slide" onRequestClose={() => setProjectPickOpen(false)}>
         <View style={styles.modalRoot}>
-          <Pressable style={styles.backdrop} onPress={() => setContractOpen(false)} />
+          <Pressable style={styles.backdrop} onPress={() => setProjectPickOpen(false)} />
           <View style={[styles.sheet, { paddingBottom: insets.bottom + spacing.lg }]}>
             <View style={styles.sheetHandle} />
-            <Text style={styles.sheetTitle}>Service Agreement 📜</Text>
-            <Text style={styles.contractIntro}>Auto-drafted between you and {data.name}. Both parties review and sign.</Text>
-            {CONTRACT_TERMS.map((t) => (
-              <View key={t.label} style={styles.termRow}>
-                <Text style={styles.termLabel}>{t.label}</Text>
-                <Text style={styles.termValue}>{t.value}</Text>
-              </View>
-            ))}
-            <Pressable testID="sign-contract-button" style={styles.submitBtn} onPress={() => { setContractOpen(false); toast.show("Signed! The contractor has been notified ✍️", "success"); }}>
-              <Text style={styles.submitText}>Review & Sign</Text>
+            <Text style={styles.sheetTitle}>Draft an agreement 📜</Text>
+            <Text style={styles.contractIntro}>Link this to a garden project (optional). We'll auto-fill a fair agreement you can edit, discuss and sign.</Text>
+            {projects.length > 0 && (
+              <ScrollView style={{ maxHeight: 240 }}>
+                {projects.map((p) => (
+                  <Pressable
+                    key={p.id}
+                    testID={`pick-project-${p.id}`}
+                    style={styles.projectRow}
+                    disabled={creatingContract}
+                    onPress={() => createContract(p.id)}
+                  >
+                    <Feather name="image" size={16} color={colors.brand} />
+                    <Text style={styles.projectRowText} numberOfLines={1}>{p.title}</Text>
+                    <Feather name="chevron-right" size={16} color={colors.muted} />
+                  </Pressable>
+                ))}
+              </ScrollView>
+            )}
+            <Pressable testID="draft-no-project" style={styles.submitBtn} onPress={() => createContract()} disabled={creatingContract}>
+              {creatingContract ? <ActivityIndicator color="#fff" /> : <Text style={styles.submitText}>{projects.length > 0 ? "Continue without a project" : "Create agreement"}</Text>}
             </Pressable>
           </View>
         </View>
@@ -309,6 +364,8 @@ export default function ContractorDetail() {
           </View>
         </KeyboardAvoidingView>
       </Modal>
+
+      <ImageViewer uri={viewerUri} visible={!!viewerUri} onClose={() => setViewerUri(undefined)} />
     </View>
   );
 }
@@ -344,6 +401,10 @@ const styles = StyleSheet.create({
   contractIcon: { width: 44, height: 44, borderRadius: radius.md, backgroundColor: "#EFF4EE", alignItems: "center", justifyContent: "center" },
   contractTitle: { fontFamily: fonts.text, fontWeight: "700", color: colors.onSurface, fontSize: 15 },
   contractSub: { fontFamily: fonts.text, color: colors.muted, fontSize: 13 },
+  linkRow: { flexDirection: "row", alignItems: "center", gap: spacing.sm, paddingVertical: spacing.xs },
+  linkText: { fontFamily: fonts.text, fontWeight: "700", color: colors.brand, fontSize: 14 },
+  projectRow: { flexDirection: "row", alignItems: "center", gap: spacing.md, paddingVertical: spacing.md, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: colors.divider },
+  projectRowText: { flex: 1, fontFamily: fonts.text, fontWeight: "600", color: colors.onSurface, fontSize: 15 },
   reviewHead: { flexDirection: "row", justifyContent: "space-between", alignItems: "center" },
   addReview: { flexDirection: "row", alignItems: "center", gap: 5 },
   addReviewText: { fontFamily: fonts.text, fontWeight: "700", color: colors.brand, fontSize: 13 },
@@ -352,6 +413,12 @@ const styles = StyleSheet.create({
   reviewTop: { flexDirection: "row", justifyContent: "space-between", alignItems: "center" },
   reviewAuthor: { fontFamily: fonts.text, fontWeight: "700", color: colors.onSurface },
   reviewText: { fontFamily: fonts.text, color: colors.onSurfaceSecondary, lineHeight: 20 },
+  reviewPhoto: { width: 92, height: 92, borderRadius: radius.sm, backgroundColor: colors.surfaceTertiary },
+  photoStrip: { flexDirection: "row", flexWrap: "wrap", gap: spacing.sm, marginTop: spacing.xs },
+  thumbWrap: { width: 64, height: 64 },
+  thumb: { width: 64, height: 64, borderRadius: radius.sm, backgroundColor: colors.surfaceTertiary },
+  thumbRemove: { position: "absolute", top: -6, right: -6, width: 22, height: 22, borderRadius: 11, backgroundColor: colors.error, alignItems: "center", justifyContent: "center" },
+  addPhoto: { width: 64, height: 64, borderRadius: radius.sm, borderWidth: 1.5, borderStyle: "dashed", borderColor: colors.brand, alignItems: "center", justifyContent: "center" },
   modalRoot: { flex: 1, justifyContent: "flex-end" },
   backdrop: { ...StyleSheet.absoluteFillObject, backgroundColor: "rgba(42,54,46,0.5)" },
   sheet: { backgroundColor: colors.surfaceSecondary, borderTopLeftRadius: radius.lg, borderTopRightRadius: radius.lg, padding: spacing.xl, gap: spacing.md },

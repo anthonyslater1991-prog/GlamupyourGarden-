@@ -1,0 +1,41 @@
+{
+  "summary": "V6 features (Price History, Best Value Badge, Reuse My Style, Wishlist From Bot) validated end-to-end + regression on POST /api/redesign. Backend: 13/13 new pytest cases PASS in /app/backend/tests/test_v6_features.py; entire suite 88/88 PASS. Product prices: 1st post -> count=1, best_value=null, latest[0] carries retailer; 2nd -> count=2, best_value=null, latest sorted newest-first; 3rd -> count=3, best_value={display:'£99.99', retailer:'Wickes'} (cheapest of the 3), latest returns all 3 with retailer per entry; invalid price string -> 400; no-auth -> 401. Reuse My Style: PUT /api/auth/style with {style, gardenType, mood, colourScheme, ornaments} returns updated public_user.saved_style AND persists on GET /api/auth/me; overwritable; requires auth. Assistant products: POST /api/assistant/products returns {products:[...]} 1..6 non-empty strings for a real Emergent LLM call and also works with empty prompt (falls back to defaults if LLM fails); requires auth. Redesign regression: POST /api/projects/{id}/redesign with wishlist=['TEST_v6 Ego mower','TEST_v6 Weber BBQ'] returns design.hotspots with the two wishlist items FIRST, retailer='B&Q', url containing diy.com — unchanged from v5. Frontend (390x844): Login as garden_test@example.com works, home shows weekly poll, Projects tab -> project 'Gal' opens with 6 hotspot markers overlaid on the AFTER image. Redesign panel testIDs verified in DOM: style-*, gtype-*, mood-*, colour-*, ornament-*, wishlist-input, add-wishlist, must-haves-input, save-my-style, apply-my-style, generate-button. Reuse-my-style flow: selected Modern/Zen/Cosy/Blues & purples/Fire pit -> Save my style shows toast '⭐ Saved as your style' -> reload project screen -> Apply my style repopulates all 5 chips with active background (rgb(107,163,190) / rgb(74,124,89) vs inactive rgb(255,255,255)) -> toast 'Your saved style applied ✨'. Product price modal: seeded 3 prices for 'TEST_v6 Ego mower' (£120 B&Q / £110 Homebase / £99.99 Wickes) via /api/product-prices, tapped hotspot -> modal shows 'Community price: £110 · from 3 buyers', best-value-badge visible with 'Best value: £99.99 at Wickes', RECENT PRICES box lists all 3 rows with retailer + user name (newest-first: Wickes, Homebase, B&Q). Bot wishlist: FAB ai-assistant-fab -> /chat (Bloom) -> suggest-products-button returns 6 real LLM products (e.g. 'Milano self-watering planter', 'Buxus sempervirens topiary') -> tap add-product-* stores name in localStorage.glam_pending_wishlist and shows toast; open any project -> pending merges into wishlist chip on screen (testID wish-0), LS cleared, toast 'Added the assistant's picks to your wishlist 🛍️'. No red screens, no PAGEERRORs, only carry-over 'shadow*' / props.pointerEvents deprecation warnings (non-blocking).",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [
+      {"screen": "global", "issues": ["Non-blocking: react-native-web deprecation warnings for 'shadow*' style props and 'props.pointerEvents' persist. Migrating to boxShadow and style.pointerEvents will silence them."]}
+    ],
+    "react_native_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_v6_features.py",
+    "/app/backend/tests/test_v5_features.py",
+    "/app/backend/tests/test_v4_features.py",
+    "/app/backend/tests/test_v3_features.py",
+    "/app/backend/tests/test_v2_features.py",
+    "/app/backend/tests/test_backend.py",
+    "/app/test_reports/pytest/v6_results.xml"
+  ],
+  "action_items": [
+    "Optional polish: (1) migrate shadow*/props.pointerEvents to boxShadow / style.pointerEvents to silence RN-web warnings; (2) server.py is now 1554 lines — split into routers (auth, projects, messaging, admin, maps, community, ai, product_prices, assistant); (3) POST /api/product-prices doesn't validate numeric range — a negative or absurdly large price is accepted (e.g. '-5' -> amount 5.0 currently because regex strips sign); consider clamping >=0 and <=10000; (4) /assistant/products silently falls back to a hardcoded list when the LLM returns bad JSON — currently indistinguishable from an LLM answer; consider surfacing a 'suggested_by':'fallback' flag so the client can tell.",
+    "Nice-to-have: add a 'Reuse My Style' visibility hint on hover/first-open of the project screen so users know a saved style exists (button is present but easy to miss)."
+  ],
+  "critical_code_review_comments": [
+    "server.py grew to 1554 lines (v5 was 1450) — refactor overdue.",
+    "_parse_amount uses regex '[\\d]+(?:\\.[\\d]{1,2})?' which happily accepts '-5' (returns 5.0) and '£1e6' style tokens; add explicit positive-only validation.",
+    "PriceInput.retailer is Optional but the UI relies on it for the best_value badge — consider requiring it (or defaulting to 'a supplier' explicitly at write time, not just at read time).",
+    "assistant_products: the fallback list is static and generic; consider seeding fallback from the last successful LLM call for that session.",
+    "public_user always exposes saved_style even to non-owner reads (e.g. via GET /api/users/{id} if that endpoint exists) — verify the style dict isn't leaking user preferences to strangers.",
+    "storage.getItem<string[]> for glam_pending_wishlist may return [] as string in web build; verified it still works but consider explicit JSON.parse guards."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_v6_features.py (created — 13 tests)"
+  ],
+  "success_rate": {"backend": "100% (13/13 v6 + 8/8 v5 + 12/12 v4 + 16/16 v3 + 15/15 v2 + 24/24 v1 = 88/88)", "frontend": "100% of V6 flows (Reuse My Style save + persist across reload + apply ✅; Product Price modal: community avg + best-value-badge + Recent Prices list with retailer ✅; Bot chat suggest-products + add-product-* -> localStorage -> project auto-merge chip ✅; redesign regression via UI panel testIDs all present ✅)"},
+  "seed_data_creation": "3 prices for 'TEST_v6 Ego mower' (£120 B&Q / £110 Homebase / £99.99 Wickes) + prices for 'TEST_v6_history_<uuid>' during pytest. Saved_style on garden_test now = {style:'cottage-bloom', gardenType:'large lawn'} (overwrite test's final state — will be re-applied by user next Apply). One TEST_ v6 design added to the first project. All prefixed 'TEST_' for future cleanup.",
+  "retest_needed": false,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "Test creds in /app/memory/test_credentials.md. Run all backend tests: cd /app/backend && pytest tests/ -v (currently 88/88 pass in ~2min). Product-price DB now has TEST_v6_* entries. Reuse-My-Style UI lives at /project/[id].tsx lines 442-451 (save-my-style, apply-my-style testIDs). Bot wishlist queue is localStorage.glam_pending_wishlist — merged automatically on the project detail screen (see project/[id].tsx useEffect line 114). ai-assistant-fab is only rendered inside the (tabs) layout — from a login screen navigate first to /(tabs)/index. Static OpenStreetMap host still unreachable in sandbox (v5 known-good fallback in place). Server has grown to 1554 lines — main agent should consider splitting."
+}

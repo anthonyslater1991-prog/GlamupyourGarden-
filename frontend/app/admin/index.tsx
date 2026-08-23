@@ -55,7 +55,7 @@ export default function AdminDashboard() {
     }
   }, []);
 
-  useEffect(() => { load(); }, [load]);
+  useEffect(() => { if (user?.role === "admin") load(); }, [load, user]);
 
   const createPoll = async () => {
     const opts = newOpts.map((o) => o.trim()).filter(Boolean);

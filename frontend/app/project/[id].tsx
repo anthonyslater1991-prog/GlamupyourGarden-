@@ -20,6 +20,8 @@ import { Feather } from "@expo/vector-icons";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import * as Haptics from "expo-haptics";
 import { apiFetch, fileUrl } from "@/src/lib/api";
+import { useAuth } from "@/src/context/AuthContext";
+import { storage } from "@/src/utils/storage";
 import { useToast } from "@/src/components/Toast";
 import { colors, spacing, radius, fonts } from "@/src/theme";
 
@@ -42,6 +44,7 @@ export default function ProjectViewer() {
   const insets = useSafeAreaInsets();
   const router = useRouter();
   const toast = useToast();
+  const { user, refresh } = useAuth();
   const { width } = useWindowDimensions();
 
   const [project, setProject] = useState<Project | null>(null);
@@ -106,6 +109,45 @@ export default function ProjectViewer() {
   }, [id]);
 
   useEffect(() => { load(); }, [load]);
+
+  // Merge any products the AI assistant queued into the wishlist.
+  useEffect(() => {
+    (async () => {
+      const pending = await storage.getItem<string[]>("glam_pending_wishlist", []);
+      if (pending && pending.length) {
+        setWishlist((prev) => Array.from(new Set([...prev, ...pending])));
+        await storage.removeItem("glam_pending_wishlist");
+        toast.show("Added the assistant's picks to your wishlist 🛍️", "success");
+      }
+    })();
+  }, []);
+
+  const saveMyStyle = async () => {
+    try {
+      await apiFetch("/auth/style", {
+        method: "PUT",
+        body: { data: { style, gardenType, mood, colourScheme, ornaments } },
+      });
+      await refresh();
+      toast.show("Saved as your style ⭐", "success");
+    } catch (e: any) {
+      toast.show(e.message, "error");
+    }
+  };
+
+  const applyMyStyle = () => {
+    const s = user?.saved_style;
+    if (!s) {
+      toast.show("Save a style first to reuse it", "info");
+      return;
+    }
+    if (s.style) setStyle(s.style);
+    setGardenType(s.gardenType ?? null);
+    setMood(s.mood ?? null);
+    setColourScheme(s.colourScheme ?? null);
+    setOrnaments(Array.isArray(s.ornaments) ? s.ornaments : []);
+    toast.show("Your saved style applied ✨", "success");
+  };
 
   const toggleChange = (c: string) => {
     if (Platform.OS !== "web") Haptics.selectionAsync();
@@ -397,6 +439,17 @@ export default function ProjectViewer() {
             multiline
           />
 
+          <View style={styles.styleActions}>
+            <Pressable testID="save-my-style" style={styles.styleActionBtn} onPress={saveMyStyle}>
+              <Feather name="star" size={15} color={colors.brand} />
+              <Text style={styles.styleActionText}>Save my style</Text>
+            </Pressable>
+            <Pressable testID="apply-my-style" style={styles.styleActionBtn} onPress={applyMyStyle}>
+              <Feather name="refresh-ccw" size={15} color={colors.brand} />
+              <Text style={styles.styleActionText}>Apply my style</Text>
+            </Pressable>
+          </View>
+
           <Pressable testID="generate-button" style={styles.generateBtn} onPress={generate} disabled={generating}>
             <Feather name="zap" size={18} color="#fff" />
             <Text style={styles.generateText}>{current ? "Regenerate" : "Redesign with AI"}</Text>
@@ -446,6 +499,27 @@ export default function ProjectViewer() {
                 <Text style={styles.communityPriceText}>
                   Community price: {priceSummary.avg_display} · from {priceSummary.count} buyer{priceSummary.count === 1 ? "" : "s"}
                 </Text>
+              </View>
+            )}
+
+            {priceSummary?.best_value && (
+              <View style={styles.bestValue} testID="best-value-badge">
+                <Feather name="award" size={14} color="#fff" />
+                <Text style={styles.bestValueText}>Best value: {priceSummary.best_value.display} at {priceSummary.best_value.retailer}</Text>
+              </View>
+            )}
+
+            {priceSummary?.latest?.length > 0 && (
+              <View style={styles.historyBox}>
+                <Text style={styles.historyTitle}>Recent prices</Text>
+                {priceSummary.latest.map((p: any) => (
+                  <View key={p.id} style={styles.historyRow}>
+                    <Text style={styles.historyPrice}>{p.display}</Text>
+                    <Text style={styles.historyMeta} numberOfLines={1}>
+                      {p.retailer ? `at ${p.retailer}` : ""} · {p.user_name}
+                    </Text>
+                  </View>
+                ))}
               </View>
             )}
 
@@ -514,6 +588,9 @@ const styles = StyleSheet.create({
   wishChip: { flexDirection: "row", alignItems: "center", gap: 6, backgroundColor: "#EFF4EE", borderRadius: radius.pill, paddingVertical: 8, paddingHorizontal: spacing.md },
   wishChipText: { fontFamily: fonts.text, fontWeight: "600", color: colors.brand, fontSize: 13 },
   notesInput: { minHeight: 70, backgroundColor: colors.surfaceSecondary, borderRadius: radius.md, borderWidth: 1, borderColor: colors.border, padding: spacing.lg, fontFamily: fonts.text, fontSize: 15, color: colors.onSurface, textAlignVertical: "top" },
+  styleActions: { flexDirection: "row", gap: spacing.md, marginTop: spacing.md },
+  styleActionBtn: { flex: 1, flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 6, borderWidth: 1.5, borderColor: colors.brand, borderRadius: radius.md, paddingVertical: spacing.md },
+  styleActionText: { fontFamily: fonts.text, fontWeight: "700", color: colors.brand, fontSize: 13 },
   generateBtn: { flexDirection: "row", alignItems: "center", justifyContent: "center", gap: spacing.sm, backgroundColor: colors.brand, height: 56, borderRadius: radius.md, marginTop: spacing.md },
   generateText: { color: "#fff", fontFamily: fonts.text, fontWeight: "700", fontSize: 16 },
   genOverlay: { flex: 1, backgroundColor: "rgba(42,54,46,0.5)", alignItems: "center", justifyContent: "center", padding: spacing.xl },
@@ -535,6 +612,13 @@ const styles = StyleSheet.create({
   hsNote: { fontFamily: fonts.text, color: colors.muted, textAlign: "center", fontSize: 12 },
   communityPrice: { flexDirection: "row", alignItems: "center", gap: spacing.sm, backgroundColor: "#EFF4EE", borderRadius: radius.md, padding: spacing.md },
   communityPriceText: { fontFamily: fonts.text, fontWeight: "700", color: colors.brand, fontSize: 13, flex: 1 },
+  bestValue: { flexDirection: "row", alignItems: "center", gap: spacing.sm, backgroundColor: colors.success, borderRadius: radius.md, paddingVertical: spacing.sm, paddingHorizontal: spacing.md },
+  bestValueText: { fontFamily: fonts.text, fontWeight: "700", color: "#fff", fontSize: 13, flex: 1 },
+  historyBox: { backgroundColor: colors.surface, borderRadius: radius.md, padding: spacing.md, gap: 4 },
+  historyTitle: { fontFamily: fonts.text, fontWeight: "800", color: colors.muted, fontSize: 11, textTransform: "uppercase", letterSpacing: 0.5 },
+  historyRow: { flexDirection: "row", alignItems: "center", gap: spacing.sm },
+  historyPrice: { fontFamily: fonts.text, fontWeight: "800", color: colors.onSurface, fontSize: 14, width: 70 },
+  historyMeta: { fontFamily: fonts.text, color: colors.muted, fontSize: 12, flex: 1 },
   addPriceBtn: { flexDirection: "row", alignItems: "center", justifyContent: "center", gap: spacing.sm, borderWidth: 1.5, borderColor: colors.borderStrong, borderRadius: radius.md, paddingVertical: spacing.md },
   addPriceText: { fontFamily: fonts.text, fontWeight: "600", color: colors.brand, fontSize: 13 },
   priceRow: { flexDirection: "row", gap: spacing.sm, alignItems: "center" },

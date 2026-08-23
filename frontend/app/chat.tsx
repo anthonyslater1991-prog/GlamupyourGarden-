@@ -16,6 +16,7 @@ import { Feather } from "@expo/vector-icons";
 import { useRouter } from "expo-router";
 import { apiFetch } from "@/src/lib/api";
 import { storage } from "@/src/utils/storage";
+import { useToast } from "@/src/components/Toast";
 import { colors, spacing, radius, fonts } from "@/src/theme";
 
 type Msg = { role: "user" | "assistant"; text: string; id?: string };
@@ -30,11 +31,38 @@ const SUGGESTIONS = [
 export default function Chat() {
   const insets = useSafeAreaInsets();
   const router = useRouter();
+  const toast = useToast();
   const listRef = useRef<FlatList>(null);
   const [sessionId, setSessionId] = useState<string | null>(null);
   const [messages, setMessages] = useState<Msg[]>([]);
   const [input, setInput] = useState("");
   const [sending, setSending] = useState(false);
+  const [products, setProducts] = useState<string[]>([]);
+  const [loadingProducts, setLoadingProducts] = useState(false);
+
+  const suggestProducts = async () => {
+    setLoadingProducts(true);
+    try {
+      const lastUser = [...messages].reverse().find((m) => m.role === "user");
+      const r = await apiFetch<{ products: string[] }>("/assistant/products", {
+        method: "POST",
+        body: { prompt: lastUser?.text || "" },
+      });
+      setProducts(r.products);
+    } catch {
+      toast.show("Couldn't fetch ideas, try again", "error");
+    } finally {
+      setLoadingProducts(false);
+    }
+  };
+
+  const addToWishlist = async (name: string) => {
+    const pending = (await storage.getItem<string[]>("glam_pending_wishlist", [])) || [];
+    if (!pending.includes(name)) pending.push(name);
+    await storage.setItem("glam_pending_wishlist", pending);
+    setProducts((prev) => prev.filter((p) => p !== name));
+    toast.show(`Added "${name}" — open a project to use it 🛍️`, "success");
+  };
 
   useEffect(() => {
     (async () => {
@@ -130,7 +158,24 @@ export default function Chat() {
           }
         />
 
+        {products.length > 0 && (
+          <View style={styles.prodPanel}>
+            <Text style={styles.prodTitle}>Tap to add to your redesign wishlist 🛍️</Text>
+            <View style={styles.prodWrap}>
+              {products.map((p) => (
+                <Pressable key={p} testID={`add-product-${p}`} style={styles.prodChip} onPress={() => addToWishlist(p)}>
+                  <Feather name="plus" size={13} color={colors.brand} />
+                  <Text style={styles.prodChipText}>{p}</Text>
+                </Pressable>
+              ))}
+            </View>
+          </View>
+        )}
+
         <View style={[styles.inputBar, { paddingBottom: insets.bottom + spacing.sm }]}>
+          <Pressable testID="suggest-products-button" style={styles.ideasBtn} onPress={suggestProducts} disabled={loadingProducts}>
+            {loadingProducts ? <ActivityIndicator size="small" color={colors.brand} /> : <Feather name="shopping-bag" size={18} color={colors.brand} />}
+          </Pressable>
           <TextInput
             testID="chat-input"
             style={styles.input}
@@ -172,6 +217,12 @@ const styles = StyleSheet.create({
   botBubble: { backgroundColor: colors.surfaceSecondary, borderWidth: 1, borderColor: colors.border, borderBottomLeftRadius: radius.sm },
   bubbleText: { fontFamily: fonts.text, fontSize: 15, color: colors.onSurface, lineHeight: 21 },
   inputBar: { flexDirection: "row", alignItems: "flex-end", gap: spacing.sm, paddingHorizontal: spacing.lg, paddingTop: spacing.sm, borderTopWidth: 1, borderTopColor: colors.divider, backgroundColor: colors.surfaceSecondary },
+  ideasBtn: { width: 46, height: 46, borderRadius: 23, backgroundColor: "#EFF4EE", alignItems: "center", justifyContent: "center" },
+  prodPanel: { paddingHorizontal: spacing.lg, paddingTop: spacing.sm, gap: spacing.sm },
+  prodTitle: { fontFamily: fonts.text, fontWeight: "700", color: colors.muted, fontSize: 12 },
+  prodWrap: { flexDirection: "row", flexWrap: "wrap", gap: spacing.sm },
+  prodChip: { flexDirection: "row", alignItems: "center", gap: 5, backgroundColor: "#EFF4EE", borderRadius: radius.pill, paddingVertical: 8, paddingHorizontal: spacing.md },
+  prodChipText: { fontFamily: fonts.text, fontWeight: "600", color: colors.brand, fontSize: 13 },
   input: { flex: 1, maxHeight: 110, minHeight: 46, backgroundColor: colors.surface, borderRadius: radius.lg, borderWidth: 1, borderColor: colors.border, paddingHorizontal: spacing.lg, paddingTop: spacing.md, paddingBottom: spacing.md, fontFamily: fonts.text, fontSize: 15, color: colors.onSurface },
   sendBtn: { width: 46, height: 46, borderRadius: 23, backgroundColor: colors.brand, alignItems: "center", justifyContent: "center" },
 });

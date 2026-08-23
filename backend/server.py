@@ -150,6 +150,7 @@ class WallPostCreate(BaseModel):
 class ReviewCreate(BaseModel):
     rating: int
     text: str
+    image_paths: List[str] = []
 
 
 class VoteInput(BaseModel):
@@ -167,6 +168,48 @@ class CoverageInput(BaseModel):
 
 class ReportActionInput(BaseModel):
     action: str  # warn | suspend | clear
+
+
+class ContractCreate(BaseModel):
+    contractor_id: str
+    project_id: Optional[str] = None
+    scope: Optional[str] = None
+    price: Optional[str] = None
+    start_date: Optional[str] = None
+    end_date: Optional[str] = None
+    deposit_percent: Optional[int] = None
+    payment_terms: Optional[str] = None
+    materials: Optional[str] = None
+    warranty: Optional[str] = None
+    site_address: Optional[str] = None
+    notes: Optional[str] = None
+
+
+class ContractUpdate(BaseModel):
+    scope: Optional[str] = None
+    price: Optional[str] = None
+    start_date: Optional[str] = None
+    end_date: Optional[str] = None
+    deposit_percent: Optional[int] = None
+    payment_terms: Optional[str] = None
+    materials: Optional[str] = None
+    warranty: Optional[str] = None
+    site_address: Optional[str] = None
+    notes: Optional[str] = None
+
+
+class ContractMessage(BaseModel):
+    text: str
+
+
+class ContractSign(BaseModel):
+    full_name: str
+    agree: bool = True
+
+
+class StageUpdate(BaseModel):
+    stage_index: int
+    note: Optional[str] = None
 
 
 # ---------------------------------------------------------------------------
@@ -195,6 +238,7 @@ def public_user(u: dict) -> dict:
         "phone": u.get("phone", ""),
         "address": u.get("address", ""),
         "postcode": u.get("postcode", ""),
+        "saved_style": u.get("saved_style"),
     }
 
 
@@ -610,11 +654,16 @@ async def _price_summary(name: str):
     docs = await db.product_prices.find({"name_key": key}, {"_id": 0}).sort("created_at", -1).to_list(200)
     amounts = [d["amount"] for d in docs if d.get("amount") is not None]
     avg = round(sum(amounts) / len(amounts), 2) if amounts else None
+    best_value = None
+    if len(docs) >= 3:
+        best = min(docs, key=lambda d: d["amount"])
+        best_value = {"display": best["display"], "retailer": best.get("retailer") or "a supplier"}
     return {
         "name": name,
         "count": len(docs),
         "avg": avg,
         "avg_display": (f"£{avg:.2f}".rstrip("0").rstrip(".") if avg is not None and avg == int(avg) else (f"£{avg:.2f}" if avg is not None else None)),
+        "best_value": best_value,
         "latest": docs[:5],
     }
 
@@ -622,6 +671,47 @@ async def _price_summary(name: str):
 @api_router.get("/product-prices")
 async def get_prices(name: str = Query(...), user: dict = Depends(get_current_user)):
     return await _price_summary(name)
+
+
+class StyleInput(BaseModel):
+    data: dict
+
+
+@api_router.put("/auth/style")
+async def save_style(body: StyleInput, user: dict = Depends(get_current_user)):
+    await db.users.update_one({"user_id": user["user_id"]}, {"$set": {"saved_style": body.data}})
+    fresh = await db.users.find_one({"user_id": user["user_id"]}, {"_id": 0})
+    return {"user": public_user(fresh)}
+
+
+class AssistProducts(BaseModel):
+    prompt: Optional[str] = None
+
+
+@api_router.post("/assistant/products")
+async def assistant_products(body: AssistProducts, user: dict = Depends(get_current_user)):
+    ask = body.prompt or "a beautiful low-maintenance garden"
+    prompt = (
+        f"A homeowner wants: {ask}. Suggest 6 specific, real, buyable garden products/items (with a brand or clear type) "
+        "they could add. Return ONLY a JSON array of short product name strings, e.g. "
+        "[\"Rattan corner sofa set\", \"Solar festoon lights\"]. No markdown, no extra text."
+    )
+    items: List[str] = []
+    try:
+        chat = LlmChat(api_key=EMERGENT_KEY, session_id=new_id("ap"),
+                       system_message="You are a garden product expert. Reply with strict JSON only.")
+        chat.with_model("openai", TEXT_MODEL)
+        text = await chat.send_message(UserMessage(text=prompt))
+        cleaned = re.sub(r"```(json)?", "", text).strip()
+        m = re.search(r"\[.*\]", cleaned, re.DOTALL)
+        if m:
+            arr = json.loads(m.group(0))
+            items = [str(x) for x in arr if isinstance(x, (str,))][:6]
+    except Exception as e:
+        logger.warning(f"assistant products failed: {e}")
+    if not items:
+        items = ["Rattan corner sofa set", "Solar festoon lights", "Large ceramic planter", "Composite decking boards", "Outdoor rug", "Fire pit bowl"]
+    return {"products": items}
 
 
 # ---------------------------------------------------------------------------
@@ -728,6 +818,7 @@ async def add_review(contractor_id: str, body: ReviewCreate, user: dict = Depend
         "author_name": user.get("name") or "Customer",
         "rating": max(1, min(5, body.rating)),
         "text": body.text,
+        "image_paths": (body.image_paths or [])[:6],
         "created_at": now_iso(),
     }
     await db.reviews.insert_one(review)
@@ -748,6 +839,225 @@ async def set_coverage(contractor_id: str, body: CoverageInput, user: dict = Dep
         raise HTTPException(status_code=404, detail="Not found")
     doc = await db.contractors.find_one({"id": contractor_id}, {"_id": 0})
     return {"contractor": doc}
+
+
+# ---------------------------------------------------------------------------
+# Contracts (auto-drafted service agreements + job tracker)
+# ---------------------------------------------------------------------------
+DEFAULT_STAGES = [
+    "Quote agreed",
+    "Deposit paid",
+    "Materials ordered",
+    "Work in progress",
+    "Final tidy & handover",
+]
+
+# Standard protective clauses included in every agreement (fixed, plain-English)
+STANDARD_CLAUSES = [
+    ("Quality of work", "The contractor will carry out the work in a professional and workmanlike manner, to a reasonable standard, using materials fit for purpose."),
+    ("Variations & extras", "Any change to the scope, materials or price must be agreed in writing by both parties (via the in-app discussion) before the extra work begins."),
+    ("Access & site", "The customer will provide safe and reasonable access to the site during agreed working hours. The contractor will keep the site tidy and safe."),
+    ("Waste & clearance", "Unless stated otherwise, the contractor will remove their own work waste and leave the garden clean on completion."),
+    ("Insurance & liability", "The contractor confirms they hold appropriate public liability insurance. Each party is responsible for loss or damage caused by their own negligence."),
+    ("Cancellation", "Either party may cancel with reasonable written notice. If the customer cancels after work/materials have started, they will pay for work done and materials already ordered."),
+    ("Payment", "Payment is due as per the schedule below. Late balance payments may pause further work until settled."),
+    ("Dispute resolution", "The parties will first try to resolve any disagreement amicably via the in-app discussion. This agreement is governed by the laws of England & Wales."),
+    ("Consumer rights", "Nothing in this agreement affects the customer's statutory rights under UK consumer law."),
+]
+
+
+def public_contract(c: dict) -> dict:
+    c = dict(c)
+    c.pop("_id", None)
+    return c
+
+
+async def _contract_or_404(contract_id: str, user: dict) -> dict:
+    c = await db.contracts.find_one({"id": contract_id})
+    if not c:
+        raise HTTPException(status_code=404, detail="Contract not found")
+    is_customer = c.get("customer_id") == user["user_id"]
+    is_pro = user.get("role") in ("contractor", "admin")
+    if not (is_customer or is_pro):
+        raise HTTPException(status_code=403, detail="You cannot access this contract")
+    return c
+
+
+def _fully_signed(c: dict) -> bool:
+    return bool(c.get("customer_signed")) and bool(c.get("contractor_signed"))
+
+
+@api_router.post("/contracts")
+async def create_contract(body: ContractCreate, user: dict = Depends(get_current_user)):
+    contractor = await db.contractors.find_one({"id": body.contractor_id}, {"_id": 0})
+    if not contractor:
+        raise HTTPException(status_code=404, detail="Contractor not found")
+
+    project = None
+    if body.project_id:
+        project = await db.projects.find_one({"id": body.project_id, "owner_id": user["user_id"]}, {"_id": 0})
+
+    services = ", ".join(contractor.get("services", [])) or "garden landscaping"
+    proj_title = (project or {}).get("title")
+    scope = body.scope or (
+        f"Garden work for '{proj_title}': {services}." if proj_title else f"Garden work: {services}."
+    )
+    start = body.start_date or "To be agreed"
+    end = body.end_date or "To be agreed"
+
+    contract = {
+        "id": new_id("contract"),
+        "project_id": body.project_id,
+        "project_title": proj_title,
+        "contractor_id": contractor["id"],
+        "contractor_name": contractor.get("name"),
+        "contractor_phone": contractor.get("phone"),
+        "customer_id": user["user_id"],
+        "customer_name": user.get("name") or "Customer",
+        "customer_phone": user.get("phone") or "",
+        "status": "draft",
+        # editable terms
+        "scope": scope,
+        "price": body.price or "To be agreed",
+        "start_date": start,
+        "end_date": end,
+        "deposit_percent": max(0, min(100, body.deposit_percent)) if body.deposit_percent is not None else 30,
+        "payment_terms": body.payment_terms or "Deposit on start, balance due on completion.",
+        "materials": body.materials or "Materials included in the price unless stated otherwise.",
+        "warranty": body.warranty or "12 months workmanship guarantee.",
+        "site_address": body.site_address or user.get("address") or user.get("postcode") or "",
+        "notes": body.notes or "",
+        # signatures
+        "customer_signed": False,
+        "customer_signature": None,
+        "customer_signed_at": None,
+        "contractor_signed": False,
+        "contractor_signature": None,
+        "contractor_signed_at": None,
+        # discussion + job tracker
+        "messages": [],
+        "stages": [{"label": s, "done": False, "note": "", "updated_at": None} for s in DEFAULT_STAGES],
+        "progress_index": 0,
+        "created_at": now_iso(),
+        "updated_at": now_iso(),
+    }
+    await db.contracts.insert_one(contract)
+    return {"contract": public_contract(contract), "clauses": [{"label": l, "text": t} for l, t in STANDARD_CLAUSES]}
+
+
+@api_router.get("/contracts")
+async def list_contracts(user: dict = Depends(get_current_user)):
+    if user.get("role") in ("contractor", "admin"):
+        q = {}
+    else:
+        q = {"customer_id": user["user_id"]}
+    docs = await db.contracts.find(q, {"_id": 0, "messages": 0}).sort("updated_at", -1).to_list(200)
+    return {"contracts": docs}
+
+
+@api_router.get("/contracts/{contract_id}")
+async def get_contract(contract_id: str, user: dict = Depends(get_current_user)):
+    c = await _contract_or_404(contract_id, user)
+    return {"contract": public_contract(c), "clauses": [{"label": l, "text": t} for l, t in STANDARD_CLAUSES]}
+
+
+@api_router.put("/contracts/{contract_id}")
+async def update_contract(contract_id: str, body: ContractUpdate, user: dict = Depends(get_current_user)):
+    c = await _contract_or_404(contract_id, user)
+    if _fully_signed(c):
+        raise HTTPException(status_code=400, detail="This agreement is signed by both parties and can no longer be edited.")
+    updates = {k: v for k, v in body.model_dump().items() if v is not None}
+    if not updates:
+        return {"contract": public_contract(c)}
+    if "deposit_percent" in updates:
+        updates["deposit_percent"] = max(0, min(100, int(updates["deposit_percent"])))
+    # editing terms invalidates any prior signature so both re-confirm
+    updates.update({
+        "customer_signed": False, "customer_signature": None, "customer_signed_at": None,
+        "contractor_signed": False, "contractor_signature": None, "contractor_signed_at": None,
+        "status": "draft", "updated_at": now_iso(),
+    })
+    await db.contracts.update_one({"id": contract_id}, {"$set": updates})
+    fresh = await db.contracts.find_one({"id": contract_id})
+    return {"contract": public_contract(fresh)}
+
+
+@api_router.post("/contracts/{contract_id}/messages")
+async def contract_message(contract_id: str, body: ContractMessage, user: dict = Depends(get_current_user)):
+    c = await _contract_or_404(contract_id, user)
+    if not body.text.strip():
+        raise HTTPException(status_code=400, detail="Message is empty")
+    role = "customer" if c.get("customer_id") == user["user_id"] else "contractor"
+    msg = {
+        "id": new_id("cmsg"),
+        "sender_id": user["user_id"],
+        "sender_name": user.get("name") or ("Customer" if role == "customer" else "Contractor"),
+        "sender_role": role,
+        "text": body.text.strip(),
+        "created_at": now_iso(),
+    }
+    await db.contracts.update_one({"id": contract_id}, {"$push": {"messages": msg}, "$set": {"updated_at": now_iso()}})
+    return {"message": msg}
+
+
+@api_router.post("/contracts/{contract_id}/sign")
+async def sign_contract(contract_id: str, body: ContractSign, user: dict = Depends(get_current_user)):
+    c = await _contract_or_404(contract_id, user)
+    if not body.agree or not body.full_name.strip():
+        raise HTTPException(status_code=400, detail="Type your full name to sign")
+    is_customer = c.get("customer_id") == user["user_id"]
+    now = now_iso()
+    if is_customer:
+        updates = {"customer_signed": True, "customer_signature": body.full_name.strip(), "customer_signed_at": now}
+    else:
+        # contractor / admin signs the contractor side
+        updates = {"contractor_signed": True, "contractor_signature": body.full_name.strip(), "contractor_signed_at": now}
+
+    merged = {**c, **updates}
+    if _fully_signed(merged):
+        updates["status"] = "active"
+        # first stage auto-complete on signature
+        stages = c.get("stages") or []
+        if stages and not stages[0].get("done"):
+            stages[0]["done"] = True
+            stages[0]["updated_at"] = now
+            updates["stages"] = stages
+            updates["progress_index"] = 1
+    else:
+        updates["status"] = "awaiting_signatures"
+    updates["updated_at"] = now
+    await db.contracts.update_one({"id": contract_id}, {"$set": updates})
+    fresh = await db.contracts.find_one({"id": contract_id})
+    return {"contract": public_contract(fresh)}
+
+
+@api_router.post("/contracts/{contract_id}/stage")
+async def update_stage(contract_id: str, body: StageUpdate, user: dict = Depends(get_current_user)):
+    if user.get("role") not in ("contractor", "admin"):
+        raise HTTPException(status_code=403, detail="Only the contractor can update job progress")
+    c = await _contract_or_404(contract_id, user)
+    if not _fully_signed(c):
+        raise HTTPException(status_code=400, detail="Both parties must sign before the job can start")
+    stages = c.get("stages") or []
+    idx = body.stage_index
+    if idx < 0 or idx >= len(stages):
+        raise HTTPException(status_code=400, detail="Invalid stage")
+    now = now_iso()
+    # mark all stages up to idx as done, later ones not done (allows moving back/forward)
+    for i, s in enumerate(stages):
+        s["done"] = i <= idx
+        if i == idx:
+            s["updated_at"] = now
+            if body.note is not None:
+                s["note"] = body.note.strip()
+    progress_index = idx + 1
+    status = "completed" if progress_index >= len(stages) else "active"
+    await db.contracts.update_one(
+        {"id": contract_id},
+        {"$set": {"stages": stages, "progress_index": progress_index, "status": status, "updated_at": now}},
+    )
+    fresh = await db.contracts.find_one({"id": contract_id})
+    return {"contract": public_contract(fresh)}
 
 
 # ---------------------------------------------------------------------------

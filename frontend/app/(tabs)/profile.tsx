@@ -140,9 +140,9 @@ export default function Profile() {
 
         <Text style={styles.groupTitle}>Legal & Safety</Text>
         <View style={styles.section}>
-          <Row icon="file-text" label="Terms & Conditions" onPress={() => toast.show("Terms coming soon", "info")} testID="terms" />
-          <Row icon="shield" label="Privacy & Data Protection" onPress={() => toast.show("Privacy policy coming soon", "info")} testID="privacy" />
-          <Row icon="lock" label="Chat & Data Safety" onPress={() => toast.show("Your chats are private & protected 🔒", "info")} testID="safety" />
+          <Row icon="file-text" label="Terms & Conditions" onPress={() => router.push("/legal/terms")} testID="terms" />
+          <Row icon="shield" label="Privacy & Data Protection" onPress={() => router.push("/legal/privacy")} testID="privacy" />
+          <Row icon="lock" label="Chat & Data Safety" onPress={() => router.push("/legal/safety")} testID="safety" />
         </View>
 
         <Pressable testID="logout-button" style={styles.logout} onPress={logout}>

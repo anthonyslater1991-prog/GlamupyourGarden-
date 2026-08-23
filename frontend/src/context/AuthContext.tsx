@@ -19,6 +19,7 @@ export type User = {
   phone?: string;
   address?: string;
   postcode?: string;
+  saved_style?: any;
 };
 
 type AuthContextType = {

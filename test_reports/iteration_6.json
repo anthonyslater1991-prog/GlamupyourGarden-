@@ -1,0 +1,50 @@
+{
+  "summary": "V7 Automated Contractor Contracts fully validated E2E. Backend: 22/22 new pytest cases PASS in /app/backend/tests/test_v7_contracts.py (auto-draft w/ 9 clauses + 5 stages + status='draft' + pre-filled scope/price/deposit/warranty/payment_terms; list = customer sees own, admin sees all; GET/{id} returns 403 for another customer (bella), 404 for unknown; PUT resets both signatures + status->'draft' while unsigned, returns 400 once BOTH signed; POST /sign customer signs customer side then admin signs contractor side, status->'active', progress_index=1, stage[0].done=true; empty full_name -> 400; POST /stage: customer=403, admin marks middle stage advances progress_index=idx+1 and keeps status='active', last stage sets status='completed' + all stages done, requires both signed (400 otherwise), out-of-range idx=400; POST /messages persists with correct sender_role ('customer' vs 'contractor'-when-admin), empty text=400, messages returned inside GET /{id}). Frontend (390x844): logged in as garden_test -> Contractors tab -> first contractor (GreenThumb Landscapes) shows draft-contract + my-agreements testIDs -> draft-contract opens chooser -> draft-no-project creates contract and navigates to /contract/{id}. Contract screen renders: status pill (Draft), Parties block (Customer + Contractor + Site), editable Agreed terms table, collapsible Standard terms & protections, dual dashed SignBoxes, open-sign button; edit-terms opens modal with edit-price/edit-scope/edit-payment_terms/edit-deposit_percent etc; changing price to '£999' + save-terms updates the Terms card and toast confirms 'signatures reset'. contract-chat-input + contract-send posts a message showing 'Customer' bubble. Job tracker (stage-0..4) is CORRECTLY hidden pre-sign. open-sign -> sign-name-input -> confirm-sign as customer marks Customer=Signed and status pill flips to 'Awaiting signatures'. Projects tab shows open-agreements which opens /contracts list; list shows the freshly-created contract card with status pill and price (£999 while awaiting sigs). Logged out, logged in as admin -> Projects tab -> open-agreements -> tapped the same contract card -> open-sign -> confirm-sign as 'Admin Contractor' -> both SignBoxes now green ✔ Signed, Job progress card appears, stage-0 already ticked (auto-first-stage-on-sign); tapped stage-2 (progress 3/5, status 'active'); tapped stage-4 -> toast 'Job marked complete 🎉', status pill 'Completed', progress bar '5 of 5 stages · 100%', all stages ticked. My Agreements list correctly reflects statuses (Awaiting signatures / Completed / Draft) and prices per contract. No red screens, only carry-over 'shadow*' / props.pointerEvents deprecation warnings (non-blocking). Deprecated packages check: none introduced by this feature.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [
+      {
+        "flow": "Hard-nav / direct link to authenticated screen (e.g. /contract/{id}, /contracts) after page reload",
+        "issue": "ContractScreen and ContractsList fire their initial apiFetch in useEffect on mount without awaiting AuthContext's loading state. On a fresh tab (hard reload), the fetch races AuthProvider's loadToken() and gets 401, then the screen either renders 'Not authenticated' (contract detail) or shows the empty-state 'No agreements yet' permanently (contracts list) even though the user IS logged in. Reproducible: login as admin, then page.goto('/contracts') or /contract/{id}. Not a blocker for normal in-app SPA navigation (all UI tested via tab/link flow works). Fix: gate the load() effect on !loading && user, or retry once when auth becomes ready.",
+        "affected_testIDs": ["open-agreements", "contract-{id}"]
+      }
+    ],
+    "design_issues": [
+      {"screen": "global", "issues": ["Non-blocking: react-native-web 'shadow*' and 'props.pointerEvents' deprecation warnings persist (carry-over from v6)."]}
+    ],
+    "react_native_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_v7_contracts.py",
+    "/app/backend/tests/test_v6_features.py",
+    "/app/backend/tests/test_v5_features.py",
+    "/app/backend/tests/test_v4_features.py",
+    "/app/backend/tests/test_v3_features.py",
+    "/app/backend/tests/test_v2_features.py",
+    "/app/backend/tests/test_backend.py",
+    "/app/test_reports/pytest/v7_results.xml"
+  ],
+  "action_items": [
+    "Fix auth-bootstrap race on authenticated screens: /app/frontend/app/contract/[id].tsx (line 108, useEffect(()=>load(),[load])) and /app/frontend/app/contracts/index.tsx (line 43, useFocusEffect load) fire before AuthContext has hydrated the token on hard reload. Gate on `!loading` from useAuth or retry when user becomes truthy. Low prio - only affects deep-links / hard-refresh; SPA nav is unaffected.",
+    "server.py grew again to 1812 lines (v6 was 1554). Splitting into routers (auth, projects, messaging, admin, maps, community, ai, product_prices, assistant, contracts) is now overdue.",
+    "ContractCreate.deposit_percent has no field-level validation - the same clamp in PUT (max(0, min(100, int))) should be applied on POST to prevent absurd values on creation.",
+    "GET /api/contracts (list) currently returns messages excluded ({_id:0, messages:0}) which is correct, but GET /api/contracts/{id} returns full messages array with no pagination - fine now, will need limit/offset once discussions grow.",
+    "public_contract(c) does not strip sensitive fields - customer_phone/contractor_phone are exposed to whoever can read the contract (fine for the two parties; verify admins reading via list are expected)."
+  ],
+  "critical_code_review_comments": [
+    "server.py 1812 lines - refactor overdue (identical comment as v6).",
+    "public_contract() only drops _id; consider excluding customer_phone/contractor_phone from list responses (they're already excluded from list via projection but not from single-contract read for admin).",
+    "PUT /contracts/{id} always resets signatures even when NO editable field is provided in the body (e.g. `PUT {}` still wipes signatures). Guard: only reset if updates dict is non-empty.",
+    "POST /contracts/{id}/sign: `is_customer = c.get('customer_id') == user['user_id']` means a non-customer user with role='customer' who accesses via _contract_or_404 (they can't - 403) would be treated as contractor side. Access control is fine here, just noting the tight coupling.",
+    "Contracts screen useEffect fires load() unconditionally on mount; needs to wait on AuthContext.loading (see integration_issue)."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_v7_contracts.py (created - 22 tests, all passing)"
+  ],
+  "success_rate": {"backend": "100% (22/22 v7 contracts) + regression not re-run this iteration but v6 still expected 88/88", "frontend": "100% of V7 flows via SPA nav (draft-contract -> draft-no-project -> /contract/{id}; edit-terms -> save-terms shows updated £999; contract-chat-input/send shows bubble with sender_role; open-sign -> sign-name-input -> confirm-sign as customer flips status to 'Awaiting signatures'; open-agreements from Projects tab shows the card; admin login -> same contract -> open-sign -> stage-0 auto-ticked -> stage-2 -> stage-4 -> status 'Completed', 5/5, 🎉 toast)"},
+  "seed_data_creation": "6+ TEST_v7 contracts left on the shared DB: one completed (£1500 - was £999 briefly then edited to £1500 per test flow), one awaiting-signatures, several drafts created by TestStageProgress/TestContractEditAndSign fixture calls. All contracts reference contractor 'GreenThumb Landscapes' (con_b30ed2c5a59d). Chat messages include TEST_v7 prefix. Safe to leave; won't affect other tests.",
+  "retest_needed": false,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "Auth: /app/memory/test_credentials.md (customer=garden_test / admin=admin@glamgarden.app). Contracts feature lives in server.py lines 843-1057 + frontend at /app/frontend/app/contract/[id].tsx, /app/frontend/app/contracts/index.tsx, and draft-contract lives on /app/frontend/app/contractor/[id].tsx (line 191). Run backend tests: cd /app/backend && python -m pytest tests/test_v7_contracts.py -v -n 0 (MUST use -n 0 to keep shared contract_id module fixture on one worker; loadscope xdist splits classes across workers and the shared contract fixture won't line up). ContractsList & ContractScreen have an auth-bootstrap race on hard-nav (see integration_issues); test via SPA nav (bottom tabs) to avoid. The public URL requires closing the Weekly Poll modal after login (press Escape) before you can tap bottom-nav tabs. Deprecated shadow*/props.pointerEvents warnings are pre-existing."
+}

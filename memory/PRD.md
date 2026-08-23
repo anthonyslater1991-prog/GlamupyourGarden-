@@ -59,6 +59,22 @@ Garden makeover app: users photograph their garden, choose changes, and generate
 - Crowdsourced product prices: buyers add the price they paid (no scraping); shown as community avg to the next person
 - Verified: backend curl + frontend lint/e2e (iteration 5)
 
+## Implemented (2026-06 fork) — iteration 6: Automated Contracts + Job Tracker
+- Auto-drafted service agreement per contractor: pre-filled scope/price/timeline/deposit/payment/materials/guarantee + 9 fair plain-English standard clauses protecting BOTH parties
+- Fully editable terms (edit resets both signatures); collapsible standard terms
+- Dual e-signature: customer (creator) signs customer side; contractor/admin signs contractor side → status draft → awaiting_signatures → active
+- Discussion thread on each agreement (both parties)
+- Job completion tracker (5 stages) — only contractor/admin updates; last stage → completed; customer sees live progress
+- My Agreements list (/contracts) reachable from Projects tab + contractor detail
+- Verified: 22/22 backend + frontend E2E passed (iteration 6)
+
+## Implemented (2026-06 fork) — iteration 7: Reviews w/ photos + Legal pages
+- Contractor reviews now accept up to 6 photos (upload + thumbnails + remove); review cards show photo strip → full-screen zoom viewer
+- Legal pages: Terms & Conditions, Privacy & Data Protection, Chat & Data Safety (/legal/[doc]) linked from Profile
+- Fixed admin `/admin` deep-link auth race (guard load on user.role === admin)
+- Confirmed existing admin visit/active counters (now/5m/1h/24h), home social links (FB/IG/TT/YT), and QR share all working
+- Verified: frontend E2E passed (iteration 7); reviews-with-photos backend curl-verified
+
 ## Backlog
 ### P1
 - Real member-to-member messaging + community chat room (opt-out aware)
