@@ -53,6 +53,9 @@ type Contract = {
   quote_amount?: number | null;
   quote_items?: { label: string; amount: number }[];
   quote_note?: string;
+  milestones?: { key: string; label: string; amount: number; status: string; release_amount?: number | null }[];
+  customer_confirmed?: boolean;
+  release_ready?: boolean;
   messages?: Msg[];
   stages: Stage[];
   progress_index: number;
@@ -177,8 +180,9 @@ export default function ContractScreen() {
     }
   };
 
-  const params = useLocalSearchParams<{ deposit?: string; session_id?: string }>();
-  const [payBusy, setPayBusy] = useState(false);
+  const params = useLocalSearchParams<{ deposit?: string; pay?: string; session_id?: string }>();
+  const [payBusy, setPayBusy] = useState<string | null>(null);
+  const [confirmBusy, setConfirmBusy] = useState(false);
   const [quoteOpen, setQuoteOpen] = useState(false);
   const [quoteItems, setQuoteItems] = useState<{ label: string; amount: string }[]>([{ label: "Materials", amount: "" }, { label: "Labour", amount: "" }]);
   const [quoteNote, setQuoteNote] = useState("");
@@ -221,31 +225,32 @@ export default function ContractScreen() {
 
   // Handle return from Stripe Checkout
   useEffect(() => {
-    if (params.deposit === "success" && params.session_id) {
+    const outcome = params.pay || params.deposit;
+    if (outcome === "success" && params.session_id) {
       (async () => {
         try {
           const r = await apiFetch<{ payment_status: string }>(`/payments/status/${params.session_id}`);
           if (r.payment_status === "paid") {
-            toast.show("Deposit paid — thank you! 🎉", "success");
+            toast.show("Payment received — held safely until the job's done 🌱", "success");
           } else {
             toast.show("Payment received, confirming…", "info");
           }
           load();
         } catch {}
       })();
-    } else if (params.deposit === "cancel") {
+    } else if (outcome === "cancel") {
       toast.show("Payment cancelled", "info");
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [params.deposit, params.session_id]);
+  }, [params.pay, params.deposit, params.session_id]);
 
-  const payDeposit = async () => {
-    setPayBusy(true);
+  const payMilestone = async (key: string) => {
+    setPayBusy(key);
     try {
       const origin = Platform.OS === "web" && typeof window !== "undefined"
         ? window.location.origin
         : (API.replace(/\/api$/, ""));
-      const r = await apiFetch<{ url: string }>(`/contracts/${id}/deposit`, { method: "POST", body: { origin } });
+      const r = await apiFetch<{ url: string }>(`/contracts/${id}/milestones/${key}/pay`, { method: "POST", body: { origin } });
       if (Platform.OS === "web" && typeof window !== "undefined") {
         window.location.href = r.url;
       } else {
@@ -253,8 +258,20 @@ export default function ContractScreen() {
       }
     } catch (e: any) {
       toast.show(e.message, "error");
-      setPayBusy(false);
+      setPayBusy(null);
     }
+  };
+
+  const confirmComplete = async () => {
+    setConfirmBusy(true);
+    try {
+      const r = await apiFetch<{ contract: Contract; released: boolean; pending: boolean }>(`/contracts/${id}/confirm-complete`, { method: "POST", body: {} });
+      setC(r.contract);
+      if (r.released) toast.show("Confirmed — funds released to your contractor 🎉", "success");
+      else if (r.pending) toast.show("Confirmed! Funds will release automatically once your contractor sets up payouts.", "success");
+      else toast.show("Thanks — job confirmed!", "success");
+    } catch (e: any) { toast.show(e.message, "error"); }
+    finally { setConfirmBusy(false); }
   };
 
   const openPdf = async () => {
@@ -435,20 +452,46 @@ export default function ContractScreen() {
           )}
         </View>
 
-        {/* Deposit payment (customer, once quote accepted) */}
-        {depositReady && !amProSide && (
+        {/* Payments — escrow milestones (customer, once quote accepted) */}
+        {depositReady && !amProSide && (c.milestones?.length ? true : false) && (
           <View style={styles.card}>
-            <Text style={styles.cardHead}>Deposit</Text>
-            {c.deposit_paid ? (
+            <Text style={styles.cardHead}>Payments 💷</Text>
+            <Text style={styles.clauseHint}>Pay each stage upfront — funds are held safely and released to your contractor as the work is done. Test mode — use card 4242 4242 4242 4242.</Text>
+            {c.milestones!.map((m) => (
+              <View key={m.key} style={styles.mRow}>
+                <View style={{ flex: 1 }}>
+                  <Text style={styles.mLabel}>{m.label}</Text>
+                  <Text style={styles.mAmt}>£{m.amount.toLocaleString()}</Text>
+                </View>
+                {m.status === "unpaid" ? (
+                  <Pressable testID={`pay-${m.key}`} style={styles.mPayBtn} onPress={() => payMilestone(m.key)} disabled={!!payBusy}>
+                    {payBusy === m.key ? <ActivityIndicator color="#fff" /> : <Text style={styles.mPayText}>Pay</Text>}
+                  </Pressable>
+                ) : (
+                  <View style={styles.mStatus}>
+                    <Feather name={m.status === "released" ? "check-circle" : "lock"} size={14} color={m.status === "released" ? colors.success : colors.brand} />
+                    <Text style={[styles.mStatusText, { color: m.status === "released" ? colors.success : colors.brand }]}>{m.status === "released" ? "Released" : "Held in escrow"}</Text>
+                  </View>
+                )}
+              </View>
+            ))}
+          </View>
+        )}
+
+        {/* Confirm complete + release (customer, after job marked done) */}
+        {!amProSide && c.status === "completed" && (c.milestones || []).some((m) => m.status === "paid") && (
+          <View style={styles.card}>
+            <Text style={styles.cardHead}>Finished work</Text>
+            {c.customer_confirmed ? (
               <View style={styles.signedNote}>
                 <Feather name="check-circle" size={16} color={colors.success} />
-                <Text style={styles.signedNoteText}>Deposit{c.deposit_amount ? ` of £${c.deposit_amount.toFixed(2)}` : ""} paid — your contractor can crack on! 🌱</Text>
+                <Text style={styles.signedNoteText}>{c.release_ready ? "Confirmed — funds will release to your contractor once they've set up payouts." : "Confirmed — held funds have been released to your contractor. 🎉"}</Text>
               </View>
             ) : (
               <>
-                <Text style={styles.clauseHint}>Pay the agreed {c.deposit_percent}% deposit securely to get the job started. Test mode — use card 4242 4242 4242 4242.</Text>
-                <Pressable testID="pay-deposit" style={styles.primaryBtn} onPress={payDeposit} disabled={payBusy}>
-                  {payBusy ? <ActivityIndicator color="#fff" /> : (<><Feather name="credit-card" size={16} color="#fff" /><Text style={styles.primaryText}>Pay deposit</Text></>)}
+                <Text style={styles.clauseHint}>Your contractor has marked the job complete. Happy with it? Confirm to release the held funds to them.</Text>
+                <Pressable testID="confirm-complete" style={styles.primaryBtn} onPress={confirmComplete} disabled={confirmBusy}>
+                  {confirmBusy ? <ActivityIndicator color="#fff" /> : (<><Feather name="thumbs-up" size={16} color="#fff" /><Text style={styles.primaryText}>Confirm job & release funds</Text></>)}
                 </Pressable>
               </>
             )}
@@ -718,6 +761,13 @@ const styles = StyleSheet.create({
   signedNoteText: { fontFamily: fonts.text, color: colors.onSurfaceSecondary, fontSize: 13, flex: 1 },
   pdfBtn: { flexDirection: "row", alignItems: "center", justifyContent: "center", gap: spacing.sm, backgroundColor: colors.surfaceSecondary, borderWidth: 1.5, borderColor: colors.brand, height: 50, borderRadius: radius.md },
   pdfText: { fontFamily: fonts.text, fontWeight: "700", color: colors.brand, fontSize: 14 },
+  mRow: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", paddingVertical: spacing.sm, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: colors.divider },
+  mLabel: { fontFamily: fonts.text, fontWeight: "700", color: colors.onSurface, fontSize: 15 },
+  mAmt: { fontFamily: fonts.text, color: colors.muted, fontSize: 14 },
+  mPayBtn: { backgroundColor: colors.brand, paddingVertical: 9, paddingHorizontal: spacing.xl, borderRadius: radius.pill, minWidth: 72, alignItems: "center" },
+  mPayText: { color: "#fff", fontFamily: fonts.text, fontWeight: "700", fontSize: 14 },
+  mStatus: { flexDirection: "row", alignItems: "center", gap: 5 },
+  mStatusText: { fontFamily: fonts.text, fontWeight: "700", fontSize: 12 },
   progressBarBg: { height: 10, borderRadius: 5, backgroundColor: colors.surfaceTertiary, overflow: "hidden" },
   progressBarFill: { height: 10, borderRadius: 5, backgroundColor: colors.brand },
   progressLabel: { fontFamily: fonts.text, fontWeight: "700", color: colors.onSurface, fontSize: 13 },

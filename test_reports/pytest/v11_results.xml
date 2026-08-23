@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?><testsuites name="pytest tests"><testsuite name="pytest" errors="1" failures="2" skipped="0" tests="8" time="2.520" timestamp="2026-08-23T18:02:55.725372+00:00" hostname="agent-env-8019c8f1-5a3b-4168-9cbc-aa67f5394e90"><testcase classname="tests.test_v11_milestones.TestSeededContract" name="test_seeded_contract_visible_to_customer" time="0.708"><failure message="KeyError: 'id'">backend/tests/test_v11_milestones.py:51: in test_seeded_contract_visible_to_customer
+    assert c["id"] == SEEDED_CONTRACT_ID
+           ^^^^^^^
+E   KeyError: 'id'</failure></testcase><testcase classname="tests.test_v11_milestones.TestAdminReleases" name="test_releases_lists_seeded_contract" time="0.834" /><testcase classname="tests.test_v11_milestones.TestSeededContract" name="test_seeded_contract_has_milestones_with_held_deposit" time="0.130"><failure message="AssertionError: expected milestones, got []&#10;assert 0 &gt;= 1&#10; +  where 0 = len([])">backend/tests/test_v11_milestones.py:61: in test_seeded_contract_has_milestones_with_held_deposit
+    assert len(ms) &gt;= 1, f"expected milestones, got {ms}"
+E   AssertionError: expected milestones, got []
+E   assert 0 &gt;= 1
+E    +  where 0 = len([])</failure></testcase><testcase classname="tests.test_v11_milestones.TestAdminReleases" name="test_admin_release_without_stripe_key_returns_503" time="0.123" /><testcase classname="tests.test_v11_milestones.TestSeededContract" name="test_seeded_contract_confirm_complete_idempotent" time="0.137" /><testcase classname="tests.test_v11_milestones.TestContractorEarnings" name="test_earnings_endpoint_for_customer_returns_zeros" time="0.570" /><testcase classname="tests.test_v11_milestones.TestContractorEarnings" name="test_fresh_contractor_earnings_zero" time="0.671" /><testcase classname="tests.test_v11_milestones.TestQuoteAcceptBuildsMilestones" name="test_full_quote_accept_milestone_pay_flow" time="1.203"><error message="failed on setup with &quot;KeyError: 0&quot;">backend/tests/test_v11_milestones.py:105: in fresh_contract
+    contractor_id = self._make_contractor()
+                    ^^^^^^^^^^^^^^^^^^^^^^^
+backend/tests/test_v11_milestones.py:101: in _make_contractor
+    return pros[0]["id"]
+           ^^^^^^^
+E   KeyError: 0</error></testcase></testsuite></testsuites>

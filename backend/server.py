@@ -1122,6 +1122,11 @@ async def create_contract(body: ContractCreate, user: dict = Depends(get_current
         "quote_note": "",
         "quote_proposed_at": None,
         "quote_decided_at": None,
+        # milestones / escrow
+        "milestones": [],
+        "customer_confirmed": False,
+        "confirmed_at": None,
+        "release_ready": False,
         # signatures
         "customer_signed": False,
         "customer_signature": None,
@@ -1393,91 +1398,110 @@ async def respond_quote(contract_id: str, body: QuoteRespond, user: dict = Depen
     if c.get("quote_status") != "proposed":
         raise HTTPException(status_code=400, detail="There is no quote awaiting your response")
     now = now_iso()
-    await db.contracts.update_one({"id": contract_id}, {"$set": {
+    updates = {
         "quote_status": "accepted" if body.accept else "declined",
         "quote_decided_at": now,
         "updated_at": now,
-    }})
+    }
+    if body.accept:
+        total = _parse_amount(c.get("price") or "") or (c.get("quote_amount") or 0)
+        if total and total > 0:
+            updates["milestones"] = _build_milestones(float(total), c.get("deposit_percent") or 0)
+    await db.contracts.update_one({"id": contract_id}, {"$set": updates})
     fresh = await db.contracts.find_one({"id": contract_id})
     return {"contract": public_contract(fresh)}
 
 
 def _deposit_ready(c: dict) -> bool:
-    # Deposit unlocks once the customer accepts the quote, or (legacy) once both sign.
+    # Payments unlock once the customer accepts the quote, or (legacy) once both sign.
     return c.get("quote_status") == "accepted" or _fully_signed(c)
 
 
-def _contract_deposit_amount(c: dict) -> Optional[float]:
-    amt = _parse_amount(c.get("price") or "")
-    if amt is None or amt <= 0:
-        return None
-    pct = c.get("deposit_percent") or 0
-    return round(amt * pct / 100.0, 2)
+def _build_milestones(total: float, deposit_percent: float) -> list:
+    dep = round(total * (deposit_percent or 0) / 100.0, 2)
+    final = round(total - dep, 2)
+    base = {"status": "unpaid", "session_id": None, "charge_id": None, "paid_at": None,
+            "transfer_id": None, "released_at": None, "release_amount": None, "platform_fee": None}
+    ms = [{**base, "key": "deposit", "label": "Deposit", "amount": dep}]
+    if final > 0.005:
+        ms.append({**base, "key": "final", "label": "Final balance", "amount": final})
+    return ms
+
+
+async def _ensure_milestones(c: dict) -> dict:
+    if c.get("milestones"):
+        return c
+    total = _parse_amount(c.get("price") or "")
+    if not total or total <= 0 or c.get("quote_status") != "accepted":
+        return c
+    ms = _build_milestones(float(total), c.get("deposit_percent") or 0)
+    await db.contracts.update_one({"id": c["id"]}, {"$set": {"milestones": ms}})
+    c["milestones"] = ms
+    return c
+
+
+async def _create_checkout(amount: float, contract_id: str, user_id: str, origin: str, name: str, milestone_key: str):
+    success_url = f"{origin}/contract/{contract_id}?pay=success&session_id={{CHECKOUT_SESSION_ID}}"
+    cancel_url = f"{origin}/contract/{contract_id}?pay=cancel"
+    meta = {"contract_id": contract_id, "user_id": user_id, "milestone": milestone_key}
+    if _real_stripe():
+        session = await run_in_threadpool(lambda: _stripe_sdk.checkout.Session.create(
+            mode="payment",
+            line_items=[{"price_data": {"currency": "gbp", "product_data": {"name": name}, "unit_amount": int(round(amount * 100))}, "quantity": 1}],
+            success_url=success_url, cancel_url=cancel_url,
+            payment_intent_data={"transfer_group": contract_id, "metadata": meta},
+            metadata=meta,
+        ))
+        return session["id"], session["url"]
+    stripe = StripeCheckout(api_key=STRIPE_API_KEY)
+    req = CheckoutSessionRequest(amount=float(amount), currency="gbp", success_url=success_url, cancel_url=cancel_url, metadata=meta)
+    session = await stripe.create_checkout_session(req)
+    return session.session_id, session.url
+
+
+async def _pay_milestone(c: dict, key: str, origin: str, user: dict):
+    if c.get("customer_id") != user["user_id"]:
+        raise HTTPException(status_code=403, detail="Only the customer pays for this job")
+    if not _deposit_ready(c):
+        raise HTTPException(status_code=400, detail="Accept the contractor's quote before paying")
+    if not STRIPE_API_KEY:
+        raise HTTPException(status_code=500, detail="Payments not configured")
+    c = await _ensure_milestones(c)
+    ms = c.get("milestones") or []
+    if not ms:
+        raise HTTPException(status_code=400, detail="Set a numeric total price before paying")
+    m = next((x for x in ms if x["key"] == key), None)
+    if not m:
+        raise HTTPException(status_code=404, detail="Payment stage not found")
+    if m["status"] != "unpaid":
+        raise HTTPException(status_code=400, detail=f"{m['label']} is already {m['status']}")
+    if m["amount"] <= 0:
+        raise HTTPException(status_code=400, detail="Nothing to pay for this stage")
+    origin = origin.rstrip("/")
+    name = f"{m['label']} — {c.get('project_title') or 'Garden project'}"
+    session_id, url = await _create_checkout(m["amount"], c["id"], user["user_id"], origin, name, key)
+    await db.payment_transactions.insert_one({
+        "id": new_id("pay"), "session_id": session_id, "contract_id": c["id"], "user_id": user["user_id"],
+        "milestone_key": key, "amount": float(m["amount"]), "currency": "gbp",
+        "payment_status": "initiated", "status": "open", "created_at": now_iso(),
+    })
+    await db.contracts.update_one({"id": c["id"], "milestones.key": key}, {"$set": {"milestones.$.session_id": session_id}})
+    if key == "deposit":
+        await db.contracts.update_one({"id": c["id"]}, {"$set": {"deposit_amount": float(m["amount"]), "deposit_session_id": session_id}})
+    return {"url": url, "session_id": session_id, "amount": float(m["amount"])}
+
+
+@api_router.post("/contracts/{contract_id}/milestones/{key}/pay")
+async def pay_milestone(contract_id: str, key: str, body: DepositRequest, user: dict = Depends(get_current_user)):
+    c = await _contract_or_404(contract_id, user)
+    return await _pay_milestone(c, key, body.origin, user)
 
 
 @api_router.post("/contracts/{contract_id}/deposit")
 async def start_deposit(contract_id: str, body: DepositRequest, user: dict = Depends(get_current_user)):
+    # Backwards-compatible alias for the deposit milestone.
     c = await _contract_or_404(contract_id, user)
-    if c.get("customer_id") != user["user_id"]:
-        raise HTTPException(status_code=403, detail="Only the customer pays the deposit")
-    if not _deposit_ready(c):
-        raise HTTPException(status_code=400, detail="Accept the contractor's quote before paying the deposit")
-    if c.get("deposit_paid"):
-        raise HTTPException(status_code=400, detail="Deposit already paid")
-    amount = _contract_deposit_amount(c)
-    if amount is None:
-        raise HTTPException(status_code=400, detail="Set a numeric total price (e.g. £2400) before paying a deposit")
-    if not STRIPE_API_KEY:
-        raise HTTPException(status_code=500, detail="Payments not configured")
-
-    origin = body.origin.rstrip("/")
-    success_url = f"{origin}/contract/{contract_id}?deposit=success&session_id={{CHECKOUT_SESSION_ID}}"
-    cancel_url = f"{origin}/contract/{contract_id}?deposit=cancel"
-
-    if _real_stripe():
-        session = await run_in_threadpool(
-            lambda: _stripe_sdk.checkout.Session.create(
-                mode="payment",
-                line_items=[{
-                    "price_data": {
-                        "currency": "gbp",
-                        "product_data": {"name": f"Deposit — {c.get('project_title') or 'Garden project'}"},
-                        "unit_amount": int(round(amount * 100)),
-                    },
-                    "quantity": 1,
-                }],
-                success_url=success_url,
-                cancel_url=cancel_url,
-                payment_intent_data={"transfer_group": contract_id, "metadata": {"contract_id": contract_id, "kind": "deposit"}},
-                metadata={"contract_id": contract_id, "user_id": user["user_id"], "kind": "deposit"},
-            )
-        )
-        session_id, session_url = session["id"], session["url"]
-    else:
-        stripe = StripeCheckout(api_key=STRIPE_API_KEY)
-        req = CheckoutSessionRequest(
-            amount=float(amount),
-            currency="gbp",
-            success_url=success_url,
-            cancel_url=cancel_url,
-            metadata={"contract_id": contract_id, "user_id": user["user_id"], "kind": "deposit"},
-        )
-        session = await stripe.create_checkout_session(req)
-        session_id, session_url = session.session_id, session.url
-
-    await db.payment_transactions.insert_one({
-        "id": new_id("pay"),
-        "session_id": session_id,
-        "contract_id": contract_id,
-        "user_id": user["user_id"],
-        "amount": float(amount),
-        "currency": "gbp",
-        "payment_status": "initiated",
-        "status": "open",
-        "created_at": now_iso(),
-    })
-    await db.contracts.update_one({"id": contract_id}, {"$set": {"deposit_amount": float(amount), "deposit_session_id": session_id}})
-    return {"url": session_url, "session_id": session_id, "amount": float(amount)}
+    return await _pay_milestone(c, "deposit", body.origin, user)
 
 
 @api_router.get("/payments/status/{session_id}")
@@ -1505,16 +1529,22 @@ async def payment_status(session_id: str, user: dict = Depends(get_current_user)
         updates["paid_at"] = now_iso()
         if charge_id:
             updates["charge_id"] = charge_id
-        cset = {"deposit_paid": True}
+        key = tx.get("milestone_key", "deposit")
+        mset = {"milestones.$.status": "paid", "milestones.$.paid_at": now_iso()}
         if charge_id:
-            cset["deposit_charge_id"] = charge_id
-        await db.contracts.update_one({"id": tx["contract_id"]}, {"$set": cset})
+            mset["milestones.$.charge_id"] = charge_id
+        await db.contracts.update_one({"id": tx["contract_id"], "milestones.key": key}, {"$set": mset})
+        if key == "deposit":
+            cset = {"deposit_paid": True}
+            if charge_id:
+                cset["deposit_charge_id"] = charge_id
+            await db.contracts.update_one({"id": tx["contract_id"]}, {"$set": cset})
     await db.payment_transactions.update_one({"session_id": session_id}, {"$set": updates})
     return {"payment_status": pay_status, "status": stat, "amount_total": amount_total, "currency": currency}
 
 
 # ---------------------------------------------------------------------------
-# Stripe Connect: contractor payout onboarding + admin fund release
+# Stripe Connect: contractor payout onboarding + escrow release (milestones)
 # ---------------------------------------------------------------------------
 DEFAULT_FEE_PERCENT = 10.0
 
@@ -1529,6 +1559,55 @@ async def _platform_fee_percent() -> float:
 def _connect_guard():
     if not _real_stripe():
         raise HTTPException(status_code=503, detail="Contractor payouts need a real Stripe test key. Add STRIPE_CONNECT_SECRET_KEY (sk_test_...) to enable Connect onboarding & transfers.")
+
+
+async def _try_release(c: dict, fee_pct_override: Optional[float] = None) -> dict:
+    """Release all paid, un-released milestones to the contractor. If payouts aren't
+    ready yet, flag the contract as 'ready to release' so it auto-releases later."""
+    c = await db.contracts.find_one({"id": c["id"]})
+    paid = [m for m in (c.get("milestones") or []) if m.get("status") == "paid"]
+    if not paid:
+        return {"released": False, "pending": False}
+    contractor = await db.contractors.find_one({"id": c.get("contractor_id")})
+    ready = bool(_real_stripe() and contractor and contractor.get("payouts_enabled") and contractor.get("stripe_account_id"))
+    if not ready:
+        await db.contracts.update_one({"id": c["id"]}, {"$set": {"release_ready": True}})
+        return {"released": False, "pending": True}
+    fee_pct = fee_pct_override if fee_pct_override is not None else await _platform_fee_percent()
+    fee_pct = max(0.0, min(50.0, float(fee_pct)))
+    account_id = contractor["stripe_account_id"]
+    for m in paid:
+        fee = round(m["amount"] * fee_pct / 100.0, 2)
+        net = round(m["amount"] - fee, 2)
+        kwargs = dict(amount=int(round(net * 100)), currency="gbp", destination=account_id,
+                      transfer_group=c["id"], metadata={"contract_id": c["id"], "milestone": m["key"], "kind": "release"})
+        if m.get("charge_id"):
+            kwargs["source_transaction"] = m["charge_id"]
+        transfer = await run_in_threadpool(lambda kw=kwargs, mk=m["key"]: _stripe_sdk.Transfer.create(idempotency_key=f"rel_{c['id']}_{mk}", **kw))
+        await db.contracts.update_one({"id": c["id"], "milestones.key": m["key"]}, {"$set": {
+            "milestones.$.status": "released", "milestones.$.transfer_id": transfer["id"],
+            "milestones.$.release_amount": net, "milestones.$.platform_fee": fee, "milestones.$.released_at": now_iso(),
+        }})
+    fresh = await db.contracts.find_one({"id": c["id"]})
+    considered = [m for m in (fresh.get("milestones") or []) if m.get("status") in ("paid", "released")]
+    all_released = bool(considered) and all(m.get("status") == "released" for m in considered)
+    await db.contracts.update_one({"id": c["id"]}, {"$set": {"released": all_released, "release_ready": False}})
+    return {"released": True, "pending": False}
+
+
+@api_router.post("/contracts/{contract_id}/confirm-complete")
+async def confirm_complete(contract_id: str, user: dict = Depends(get_current_user)):
+    c = await _contract_or_404(contract_id, user)
+    if c.get("customer_id") != user["user_id"]:
+        raise HTTPException(status_code=403, detail="Only the customer can confirm the job")
+    if c.get("status") != "completed":
+        raise HTTPException(status_code=400, detail="The contractor needs to mark the job complete first")
+    now = now_iso()
+    await db.contracts.update_one({"id": contract_id}, {"$set": {"customer_confirmed": True, "confirmed_at": now, "updated_at": now}})
+    c["customer_confirmed"] = True
+    result = await _try_release(c)
+    fresh = await db.contracts.find_one({"id": contract_id})
+    return {"contract": public_contract(fresh), **result}
 
 
 @api_router.post("/connect/onboard")
@@ -1576,8 +1655,42 @@ async def connect_status(user: dict = Depends(get_current_user)):
         "charges_enabled": bool(account.get("charges_enabled")),
         "onboarding_status": "complete" if details else "incomplete",
     }})
+    # Auto-release any contracts that were waiting for this contractor's payouts to be ready
+    if payouts:
+        waiting = await db.contracts.find({"contractor_id": ids[0], "release_ready": True}).to_list(100)
+        for w in waiting:
+            await _try_release(w)
     return {"connected": True, "payouts_enabled": payouts, "onboarded": details,
             "currently_due": (account.get("requirements") or {}).get("currently_due", [])}
+
+
+@api_router.get("/contractor/earnings")
+async def contractor_earnings(user: dict = Depends(get_current_user)):
+    ids = await owned_contractor_ids(user)
+    if not ids:
+        return {"held": 0.0, "released": 0.0, "items": []}
+    docs = await db.contracts.find({"contractor_id": {"$in": ids}}, {"_id": 0, "messages": 0}).sort("updated_at", -1).to_list(500)
+    fee = await _platform_fee_percent()
+    held = 0.0
+    released = 0.0
+    items = []
+    for d in docs:
+        c_held = 0.0
+        c_rel = 0.0
+        for m in d.get("milestones") or []:
+            if m.get("status") == "paid":
+                c_held += round(m["amount"] * (1 - fee / 100.0), 2)
+            elif m.get("status") == "released":
+                c_rel += float(m.get("release_amount") or 0)
+        held += c_held
+        released += c_rel
+        if c_held > 0 or c_rel > 0:
+            items.append({
+                "contract_id": d["id"], "project_title": d.get("project_title"),
+                "customer_name": d.get("customer_name"), "status": d.get("status"),
+                "held": round(c_held, 2), "released": round(c_rel, 2),
+            })
+    return {"held": round(held, 2), "released": round(released, 2), "items": items}
 
 
 @api_router.get("/admin/settings")
@@ -1601,24 +1714,25 @@ async def list_releases(user: dict = Depends(get_current_user)):
     if user.get("role") != "admin":
         raise HTTPException(status_code=403, detail="Admins only")
     docs = await db.contracts.find(
-        {"deposit_paid": True, "released": {"$ne": True}},
+        {"milestones": {"$elemMatch": {"status": "paid"}}},
         {"_id": 0, "messages": 0},
     ).sort("updated_at", -1).to_list(100)
     fee_pct = await _platform_fee_percent()
     out = []
     for d in docs:
         contractor = await db.contractors.find_one({"id": d.get("contractor_id")}, {"_id": 0})
-        amt = float(d.get("deposit_amount") or 0)
-        fee = round(amt * fee_pct / 100.0, 2)
+        held = sum(m["amount"] for m in (d.get("milestones") or []) if m.get("status") == "paid")
+        fee = round(held * fee_pct / 100.0, 2)
         out.append({
             "contract_id": d["id"],
             "project_title": d.get("project_title"),
             "customer_name": d.get("customer_name"),
             "contractor_name": d.get("contractor_name"),
-            "deposit_amount": amt,
+            "deposit_amount": round(held, 2),
             "platform_fee": fee,
-            "net_to_contractor": round(amt - fee, 2),
+            "net_to_contractor": round(held - fee, 2),
             "job_status": d.get("status"),
+            "customer_confirmed": bool(d.get("customer_confirmed")),
             "payouts_enabled": bool(contractor and contractor.get("payouts_enabled")),
             "has_stripe_account": bool(contractor and contractor.get("stripe_account_id")),
         })
@@ -1633,40 +1747,16 @@ async def release_deposit(contract_id: str, body: ReleaseInput, user: dict = Dep
     if not c:
         raise HTTPException(status_code=404, detail="Contract not found")
     _connect_guard()
-    if not c.get("deposit_paid"):
-        raise HTTPException(status_code=400, detail="No paid deposit to release")
-    if c.get("released"):
-        raise HTTPException(status_code=400, detail="Deposit already released")
+    paid = [m for m in (c.get("milestones") or []) if m.get("status") == "paid"]
+    if not paid:
+        raise HTTPException(status_code=400, detail="No held funds to release")
     contractor = await db.contractors.find_one({"id": c.get("contractor_id")})
-    account_id = contractor and contractor.get("stripe_account_id")
-    if not account_id:
+    if not (contractor and contractor.get("stripe_account_id")):
         raise HTTPException(status_code=400, detail="Contractor hasn't connected a payout account yet")
     if not contractor.get("payouts_enabled"):
         raise HTTPException(status_code=400, detail="Contractor's payouts aren't enabled yet (onboarding incomplete)")
-
-    amt = float(c.get("deposit_amount") or 0)
-    fee_pct = body.fee_percent if body.fee_percent is not None else await _platform_fee_percent()
-    fee_pct = max(0.0, min(50.0, float(fee_pct)))
-    fee = round(amt * fee_pct / 100.0, 2)
-    net = round(amt - fee, 2)
-
-    kwargs = dict(
-        amount=int(round(net * 100)),
-        currency="gbp",
-        destination=account_id,
-        transfer_group=contract_id,
-        metadata={"contract_id": contract_id, "kind": "deposit_release"},
-    )
-    if c.get("deposit_charge_id"):
-        kwargs["source_transaction"] = c["deposit_charge_id"]
-    transfer = await run_in_threadpool(lambda: _stripe_sdk.Transfer.create(
-        idempotency_key=f"release_{contract_id}", **kwargs))
-    now = now_iso()
-    await db.contracts.update_one({"id": contract_id}, {"$set": {
-        "released": True, "transfer_id": transfer["id"],
-        "release_amount": net, "platform_fee": fee, "released_at": now, "updated_at": now,
-    }})
-    return {"ok": True, "transfer_id": transfer["id"], "net_to_contractor": net, "platform_fee": fee}
+    res = await _try_release(c, body.fee_percent)
+    return {"ok": True, **res}
 
 
 @api_router.get("/reminders")

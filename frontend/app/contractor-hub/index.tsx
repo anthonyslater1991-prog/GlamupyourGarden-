@@ -33,6 +33,7 @@ export default function ContractorHub() {
   const [replyText, setReplyText] = useState("");
   const [connect, setConnect] = useState<{ payouts_enabled: boolean; onboarded: boolean; connected: boolean } | null>(null);
   const [connectBusy, setConnectBusy] = useState(false);
+  const [earnings, setEarnings] = useState<{ held: number; released: number; items: any[] } | null>(null);
 
   const load = useCallback(async () => {
     try {
@@ -45,6 +46,10 @@ export default function ContractorHub() {
         try {
           const cs = await apiFetch<{ payouts_enabled: boolean; onboarded: boolean; connected: boolean }>("/connect/status");
           setConnect(cs);
+        } catch {}
+        try {
+          const e = await apiFetch<{ held: number; released: number; items: any[] }>("/contractor/earnings");
+          setEarnings(e);
         } catch {}
       } else if (!r.pending) {
         const dir = await apiFetch<{ contractors: Contractor[] }>("/contractors");
@@ -189,6 +194,38 @@ export default function ContractorHub() {
               <Feather name="chevron-right" size={18} color={colors.muted} />
             </Pressable>
 
+            {/* Earnings */}
+            <View style={styles.card}>
+              <Text style={styles.cardTitle}>Earnings 📊</Text>
+              <View style={styles.earnRow}>
+                <View style={styles.earnBox}>
+                  <Text style={styles.earnAmt}>£{(earnings?.held ?? 0).toLocaleString()}</Text>
+                  <Text style={styles.earnLabel}>Held in escrow</Text>
+                </View>
+                <View style={styles.earnBox}>
+                  <Text style={[styles.earnAmt, { color: colors.success }]}>£{(earnings?.released ?? 0).toLocaleString()}</Text>
+                  <Text style={styles.earnLabel}>Paid out to you</Text>
+                </View>
+              </View>
+              {(earnings?.items || []).length === 0 ? (
+                <Text style={styles.cardBody}>No earnings yet — they&apos;ll appear here as customers pay.</Text>
+              ) : (
+                earnings!.items.map((it) => (
+                  <View key={it.contract_id} style={styles.earnItem}>
+                    <View style={{ flex: 1 }}>
+                      <Text style={styles.earnItemTitle} numberOfLines={1}>{it.project_title || "Garden project"}</Text>
+                      <Text style={styles.earnItemSub}>{it.customer_name} · {it.status}</Text>
+                    </View>
+                    <View style={{ alignItems: "flex-end" }}>
+                      {it.held > 0 && <Text style={styles.earnHeld}>£{it.held.toLocaleString()} held</Text>}
+                      {it.released > 0 && <Text style={styles.earnPaid}>£{it.released.toLocaleString()} paid</Text>}
+                    </View>
+                  </View>
+                ))
+              )}
+              <Text style={styles.hintSmall}>Amounts shown are after the platform commission.</Text>
+            </View>
+
             {/* Payouts */}
             <View style={styles.card}>
               <Text style={styles.cardTitle}>Payouts 💷</Text>
@@ -307,6 +344,16 @@ const styles = StyleSheet.create({
   b: { fontWeight: "800", color: colors.onSurface },
   metaLine: { fontFamily: fonts.text, color: colors.muted, fontSize: 12, marginTop: 2 },
   payoutOk: { flexDirection: "row", alignItems: "center", gap: spacing.sm, backgroundColor: "#F0F6F1", padding: spacing.md, borderRadius: radius.md },
+  earnRow: { flexDirection: "row", gap: spacing.md },
+  earnBox: { flex: 1, backgroundColor: colors.surface, borderRadius: radius.md, borderWidth: 1, borderColor: colors.border, padding: spacing.md, alignItems: "center" },
+  earnAmt: { fontFamily: fonts.display, fontSize: 22, color: colors.brand },
+  earnLabel: { fontFamily: fonts.text, color: colors.muted, fontSize: 12, marginTop: 2 },
+  earnItem: { flexDirection: "row", alignItems: "center", gap: spacing.sm, paddingVertical: spacing.sm, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: colors.divider },
+  earnItemTitle: { fontFamily: fonts.text, fontWeight: "700", color: colors.onSurface, fontSize: 14 },
+  earnItemSub: { fontFamily: fonts.text, color: colors.muted, fontSize: 12 },
+  earnHeld: { fontFamily: fonts.text, fontWeight: "700", color: colors.brand, fontSize: 13 },
+  earnPaid: { fontFamily: fonts.text, fontWeight: "700", color: colors.success, fontSize: 13 },
+  hintSmall: { fontFamily: fonts.text, color: colors.muted, fontSize: 11, marginTop: spacing.xs },
   listingTop: { flexDirection: "row", gap: spacing.md },
   listingImg: { width: 64, height: 64, borderRadius: radius.md, backgroundColor: colors.surfaceTertiary },
   chipsWrap: { flexDirection: "row", flexWrap: "wrap", gap: spacing.sm },

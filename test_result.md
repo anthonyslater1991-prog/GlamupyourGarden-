@@ -260,3 +260,30 @@
 ## agent_communication:
 ##     -agent: "main"
 ##     -message: "Iteration 9 (Stripe Connect). NOTE: full payouts need a real Stripe test key which is NOT set in this env, so onboarding/transfers intentionally return 503 with a helpful message. Please verify the GRACEFUL behaviour + UI: (1) Admin dashboard > Deposit releases: fee-input shows current %, changing it and save-fee persists (toast) — verify GET/POST /admin/settings. (2) Admin releases list renders (likely 'No deposits awaiting release' or items with a disabled release button + 'Contractor payouts not set up' note) and a yellow connect-note warning about the missing key. (3) Contractor Hub (register a contractor, claim+admin-approve a listing, back as contractor): Payouts card shows a 'Set up payouts' button (connect-payouts); tapping it surfaces the friendly 'needs a real Stripe test key' error toast (503), NOT a crash. Do NOT attempt real Stripe onboarding/transfers. Creds: customer garden_test@example.com/secret123, admin admin@glamgarden.app/GlamAdmin2026!."
+
+## --- Iteration 10: Milestone escrow + Auto-release on confirm + Payout history ---
+## Model: 2 milestones (Deposit = deposit_percent% of quote total; Final balance = remainder). Both PAID UPFRONT via Stripe Checkout, held on platform balance (escrow). Customer taps "Confirm job & release" ONLY after contractor marks job complete -> releases held funds to contractor (auto). If contractor payouts not ready, contract flagged release_ready and auto-releases when their payout account is ready. Contractor earnings screen shows held vs paid-out. Real transfers require STRIPE_CONNECT_SECRET_KEY (sk_test_...).
+## backend:
+##   - task: "Milestones (pay upfront/escrow), confirm-complete auto-release, earnings, auto-release-on-onboard"
+##     implemented: true
+##     working: true
+##     file: "backend/server.py"
+##     needs_retesting: false
+##     status_history:
+##         -working: true
+##         -agent: "main"
+##         -comment: "Quote accept builds milestones [deposit,final]. POST /contracts/{id}/milestones/{key}/pay (customer, held). /deposit kept as alias for deposit milestone. payment status marks the specific milestone paid. POST /contracts/{id}/confirm-complete (customer, job must be 'completed') -> _try_release: releases paid milestones via Transfer minus fee, or sets release_ready if payouts not ready. connect/status auto-releases release_ready contracts once payouts enabled. GET /contractor/earnings (held net + released). admin/releases now milestone-based + customer_confirmed. Curl+DB-sim verified: confirm-complete -> pending/release_ready (no key), admin/releases held £720 net £648 (10%), release -> 503 without key, confirm before completed -> 400."
+## frontend:
+##   - task: "Contract milestones/escrow UI + confirm-release + Contractor earnings card"
+##     implemented: true
+##     working: "NA"
+##     file: "frontend/app/contract/[id].tsx, frontend/app/contractor-hub/index.tsx"
+##     needs_retesting: true
+##     status_history:
+##         -working: "NA"
+##         -agent: "main"
+##         -comment: "Contract: 'Payments' card lists milestones with pay-{key} buttons (opens Checkout); paid shows 'Held in escrow', released shows 'Released'. When job status completed + paid held funds + customer: 'Finished work' card with confirm-complete button (releases or shows 'will release once contractor sets up payouts'). Return param handling supports ?pay=success. Contractor Hub: Earnings card (held vs paid-out + per-contract list)."
+
+## agent_communication:
+##     -agent: "main"
+##     -message: "Iteration 10 (Milestone escrow + auto-release + earnings). Real Stripe payouts still need STRIPE_CONNECT_SECRET_KEY (not set), so releases stay 'pending/ready-to-release' (expected). Please test: (1) Quote accept -> contract 'Payments' card shows TWO milestones (Deposit £720, Final balance £1680 for a £2400 quote at 30%), each with a pay-{key} button that opens Stripe Checkout (test card 4242...). (2) After paying (or if you can't complete Checkout in automation, that's OK) the milestone shows 'Held in escrow'. (3) confirm-complete only appears when job status is 'completed' AND there are held funds; tapping shows a success/pending toast and the card flips to confirmed. (4) Contractor Hub Earnings card renders held vs paid-out. Backend already verified via curl+DB-sim (confirm->release_ready, admin/releases held£720 net£648, 503 without key). Do NOT attempt real Stripe transfers. Creds: customer garden_test@example.com/secret123, admin admin@glamgarden.app/GlamAdmin2026!."

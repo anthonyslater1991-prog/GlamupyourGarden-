@@ -87,6 +87,13 @@ Garden makeover app: users photograph their garden, choose changes, and generate
 - Stripe Connect (escrow-style payouts): contractor onboards an Express payout account (Contractor Hub > Payouts); customer deposit held on platform balance; ADMIN manually releases funds to the contractor minus a configurable % commission (Admin > Deposit releases). Built with raw stripe lib; ACTIVATES when a real Stripe test key STRIPE_CONNECT_SECRET_KEY=sk_test_... is added to backend/.env — otherwise gracefully returns 503 with guidance. Verified 13/13 backend + frontend (graceful guards).
 - NOTE: built-in sk_test_emergent only supports Checkout, not Connect. To test real payouts, add your own Stripe test secret key as STRIPE_CONNECT_SECRET_KEY.
 
+## Implemented (2026-06 fork) — iteration 10: Milestone escrow + Auto-release + Payout history
+- Milestone payments: quote acceptance builds 2 stages — Deposit (deposit% of quote total) + Final balance (remainder). Customer pays each upfront via Stripe Checkout; funds HELD in escrow on the platform balance ("Held in escrow" state).
+- Auto-release: customer taps "Confirm job & release" (only after the contractor marks the job complete) → held funds release to the contractor minus the platform commission. If the contractor's payouts aren't set up, the contract is flagged release_ready and auto-releases the moment they finish onboarding (checked on /connect/status).
+- Payout history: Contractor Hub "Earnings" card shows Held-in-escrow vs Paid-out totals + per-contract breakdown (net of commission).
+- Admin still has manual release + configurable commission % (Admin > Deposit releases). Real transfers need STRIPE_CONNECT_SECRET_KEY (sk_test_...); without it, releases stay pending gracefully.
+- Verified: 8/8 backend pytest + curl/DB-sim; frontend contract Payments/Quote/Signatures + My Agreements + Home reminder/counters visually confirmed.
+
 ## Backlog
 ### P1
 - Real member-to-member messaging + community chat room (opt-out aware)
