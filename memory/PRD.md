@@ -101,6 +101,13 @@ Garden makeover app: users photograph their garden, choose changes, and generate
 - Custom branded app tile designed (green gradient + sun + cream sprout) used for home-screen/desktop icon and Android adaptive icon (bg #2E5C42).
 - NOTE: installability applies to the hosted WEB build. User must redeploy (Publish → Deploy) to push to production; if the production URL still serves the Expo Go QR page rather than the web app, that's a hosting/deployment matter for Emergent support.
 
+## Implemented (2026-06 fork) — iteration 12: Idiot-proof install prompt (web/PWA)
+- InstallPrompt component (src/components/InstallPrompt.tsx) mounted globally in _layout; web-only.
+- Always-visible friendly bottom banner "Add to your home screen" (app tile + one-line pitch + How/Install + dismiss). Persists dismissal via localStorage; hides when already installed (standalone).
+- One-tap native install when the browser fires beforeinstallprompt (Chrome/Edge). Otherwise opens a step-by-step "How" modal — iOS: Share → Add to Home Screen; Android/desktop: menu → Install app.
+- Verified live in preview (banner renders, How modal shows steps). Named app tile designed with brand font.
+- Reminder: this install UX only appears on the HOSTED WEB (PWA) build. Getting a customer-facing installable URL requires a Web/Full-Stack web deployment (mobile/Expo-Go deploy does not become a browser-installable PWA) — per Emergent support.
+
 ## Backlog
 ### P1
 - Real member-to-member messaging + community chat room (opt-out aware)

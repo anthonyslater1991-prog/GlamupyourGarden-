@@ -12,6 +12,7 @@ import { useIconFonts } from "@/src/hooks/use-icon-fonts";
 import { AuthProvider } from "@/src/context/AuthContext";
 import { UnreadProvider } from "@/src/context/UnreadContext";
 import { ToastProvider } from "@/src/components/Toast";
+import InstallPrompt from "@/src/components/InstallPrompt";
 import { installPwaHead } from "@/src/lib/pwa";
 
 // Disable logbox errors etc so that users can see the app
@@ -58,6 +59,7 @@ export default function RootLayout() {
               <Stack screenOptions={{ headerShown: false, contentStyle: { backgroundColor: "#F8F9F5" } }}>
                 <Stack.Screen name="chat" options={{ presentation: "modal" }} />
               </Stack>
+              <InstallPrompt />
               </UnreadProvider>
             </AuthProvider>
           </ToastProvider>
