@@ -18,7 +18,7 @@ type Overview = {
 };
 type AdminProject = { id: string; title: string; owner_name: string; owner_email: string; owner_phone?: string; owner_postcode?: string; owner_address?: string; design_count: number; original_path?: string; latest_image?: string; updated_at: string };
 type Poll = { id: string; question: string; options: string[]; votes: number[]; active: boolean };
-type Report = { id: string; reporter_name: string; reported_name: string; reason: string; context: string; created_at: string };
+type Report = { id: string; reporter_name: string; reported_name: string; reported_id: string; reason: string; context: string; created_at: string; status?: string; resolution?: string; reported_status?: string };
 
 export default function AdminDashboard() {
   const insets = useSafeAreaInsets();
@@ -82,6 +82,17 @@ export default function AdminDashboard() {
     try {
       await apiFetch(`/admin/polls/${id}`, { method: "DELETE" });
       toast.show("Poll deleted", "success");
+      load();
+    } catch (e: any) {
+      toast.show(e.message, "error");
+    }
+  };
+
+  const reportAction = async (id: string, action: string) => {
+    try {
+      await apiFetch(`/admin/reports/${id}/action`, { method: "POST", body: { action } });
+      const label = action === "warn" ? "Member warned ⚠️" : action === "suspend" ? "Member suspended 🚫" : "Report cleared ✅";
+      toast.show(label, "success");
       load();
     } catch (e: any) {
       toast.show(e.message, "error");
@@ -206,10 +217,30 @@ export default function AdminDashboard() {
             <View key={r.id} style={styles.reportCard} testID={`report-${r.id}`}>
               <View style={styles.reportTop}>
                 <Text style={styles.reportName}>{r.reported_name}</Text>
-                <Text style={styles.reportDate}>{r.created_at?.slice(0, 10)}</Text>
+                <View style={[styles.statusBadge, r.reported_status === "suspended" ? styles.stSuspended : r.reported_status === "warned" ? styles.stWarned : styles.stActive]}>
+                  <Text style={styles.statusText}>{(r.reported_status || "active").toUpperCase()}</Text>
+                </View>
               </View>
               <Text style={styles.reportReason}>{r.reason}</Text>
-              <Text style={styles.reportMeta}>Reported by {r.reporter_name} · {r.context}</Text>
+              <Text style={styles.reportMeta}>Reported by {r.reporter_name} · {r.context} · {r.created_at?.slice(0, 10)}</Text>
+              {r.status === "resolved" ? (
+                <Text style={styles.resolvedText}>✓ Resolved — {r.resolution}</Text>
+              ) : (
+                <View style={styles.actionRow}>
+                  <Pressable testID={`warn-${r.id}`} style={[styles.actionBtn, styles.warnBtn]} onPress={() => reportAction(r.id, "warn")}>
+                    <Feather name="alert-triangle" size={13} color={colors.onBrandTertiary} />
+                    <Text style={styles.warnText}>Warn</Text>
+                  </Pressable>
+                  <Pressable testID={`suspend-${r.id}`} style={[styles.actionBtn, styles.suspendBtn]} onPress={() => reportAction(r.id, "suspend")}>
+                    <Feather name="slash" size={13} color="#fff" />
+                    <Text style={styles.suspendText}>Suspend</Text>
+                  </Pressable>
+                  <Pressable testID={`clear-${r.id}`} style={[styles.actionBtn, styles.clearBtn]} onPress={() => reportAction(r.id, "clear")}>
+                    <Feather name="check" size={13} color={colors.brand} />
+                    <Text style={styles.clearText}>Clear</Text>
+                  </Pressable>
+                </View>
+              )}
             </View>
           ))
         )}
@@ -348,6 +379,20 @@ const styles = StyleSheet.create({
   reportDate: { fontFamily: fonts.text, color: colors.muted, fontSize: 12 },
   reportReason: { fontFamily: fonts.text, color: colors.error, fontWeight: "600" },
   reportMeta: { fontFamily: fonts.text, color: colors.muted, fontSize: 12 },
+  statusBadge: { paddingVertical: 3, paddingHorizontal: 8, borderRadius: radius.pill },
+  stActive: { backgroundColor: "#EFF4EE" },
+  stWarned: { backgroundColor: "#FBF3E2" },
+  stSuspended: { backgroundColor: "#FBEAEA" },
+  statusText: { fontFamily: fonts.text, fontWeight: "800", fontSize: 10, color: colors.onSurfaceTertiary },
+  resolvedText: { fontFamily: fonts.text, color: colors.success, fontWeight: "700", fontSize: 13, marginTop: spacing.xs },
+  actionRow: { flexDirection: "row", gap: spacing.sm, marginTop: spacing.sm },
+  actionBtn: { flex: 1, flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 4, height: 38, borderRadius: radius.md },
+  warnBtn: { backgroundColor: colors.brandTertiary },
+  warnText: { fontFamily: fonts.text, fontWeight: "700", color: colors.onBrandTertiary, fontSize: 13 },
+  suspendBtn: { backgroundColor: colors.error },
+  suspendText: { fontFamily: fonts.text, fontWeight: "700", color: "#fff", fontSize: 13 },
+  clearBtn: { borderWidth: 1.5, borderColor: colors.brand },
+  clearText: { fontFamily: fonts.text, fontWeight: "700", color: colors.brand, fontSize: 13 },
   inputLabel: { fontFamily: fonts.text, fontWeight: "700", color: colors.onSurface, marginTop: spacing.md, marginBottom: spacing.xs },
   pollInput: { backgroundColor: colors.surface, borderRadius: radius.md, borderWidth: 1, borderColor: colors.border, padding: spacing.md, fontFamily: fonts.text, fontSize: 15, color: colors.onSurface, marginBottom: spacing.sm },
   submitBtn: { backgroundColor: colors.brand, height: 52, borderRadius: radius.md, alignItems: "center", justifyContent: "center", marginTop: spacing.md },

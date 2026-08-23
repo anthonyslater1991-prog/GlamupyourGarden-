@@ -43,6 +43,13 @@ Garden makeover app: users photograph their garden, choose changes, and generate
 - Map & pins: postcodes.io geocoding + haversine distances; Contractors map + distance badges; Admin location map (customers vs contractors). Static OSM map image (keyless) with graceful fallback; interactive native maps intentionally avoided (needs dev build/keys)
 - Verified: 16/16 backend tests + frontend e2e passed (iteration 3)
 
+## Implemented (2026-08-23) — iteration 4
+- Message Photos Preview: tap any shared photo (DM or room) → full-screen zoomable viewer (pinch/double-tap)
+- Nearby Alerts: Home banner when a top-rated (≥4.7) contractor covers the member's postcode area
+- Contractor Coverage: coverage_miles per contractor, editable by admin/contractor; drives reachable/"near you"
+- Report Actions: admin Warn / Suspend / Clear on reports; suspended members blocked from login + sessions revoked
+- Verified: 12/12 backend tests + frontend flows passed (iteration 4)
+
 ## Backlog
 ### P1
 - Real member-to-member messaging + community chat room (opt-out aware)

@@ -10,6 +10,7 @@ import { pickFromLibrary, uploadImage } from "@/src/lib/upload";
 import { useAuth } from "@/src/context/AuthContext";
 import { useUnread } from "@/src/context/UnreadContext";
 import { useToast } from "@/src/components/Toast";
+import ImageViewer from "@/src/components/ImageViewer";
 import { colors, spacing, radius, fonts } from "@/src/theme";
 
 type Msg = { id: string; sender_id: string; recipient_id: string; text: string; image_path?: string; created_at: string };
@@ -31,6 +32,7 @@ export default function DMThread() {
   const [menuOpen, setMenuOpen] = useState(false);
   const [reportOpen, setReportOpen] = useState(false);
   const [uploading, setUploading] = useState(false);
+  const [viewerUri, setViewerUri] = useState<string | undefined>(undefined);
 
   const load = useCallback(async () => {
     try {
@@ -142,7 +144,9 @@ export default function DMThread() {
               <View style={[styles.row, mine ? styles.rowMine : styles.rowOther]}>
                 <View style={[styles.bubble, mine ? styles.mine : styles.otherB, item.image_path && styles.imgBubble]}>
                   {item.image_path && (
-                    <Image source={{ uri: fileUrl(item.image_path) }} style={styles.msgImage} contentFit="cover" />
+                    <Pressable testID={`dm-image-${item.id}`} onPress={() => setViewerUri(fileUrl(item.image_path))}>
+                      <Image source={{ uri: fileUrl(item.image_path) }} style={styles.msgImage} contentFit="cover" />
+                    </Pressable>
                   )}
                   {!!item.text && (
                     <Text style={[styles.bubbleText, mine && { color: "#fff" }, item.image_path && { marginTop: spacing.xs }]}>{item.text}</Text>
@@ -205,6 +209,8 @@ export default function DMThread() {
           </View>
         </View>
       </Modal>
+
+      <ImageViewer uri={viewerUri} visible={!!viewerUri} onClose={() => setViewerUri(undefined)} />
     </View>
   );
 }

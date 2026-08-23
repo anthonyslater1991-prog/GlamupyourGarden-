@@ -19,10 +19,11 @@ import { KeyboardAvoidingView } from "react-native-keyboard-controller";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import * as Haptics from "expo-haptics";
 import { apiFetch } from "@/src/lib/api";
+import { useAuth } from "@/src/context/AuthContext";
 import { useToast } from "@/src/components/Toast";
 import { colors, spacing, radius, fonts } from "@/src/theme";
 
-type Contractor = { id: string; name: string; tagline: string; services: string[]; phone: string; rating: number; review_count: number; location: string; image: string };
+type Contractor = { id: string; name: string; tagline: string; services: string[]; phone: string; rating: number; review_count: number; location: string; image: string; coverage_miles?: number };
 type Review = { id: string; author_name: string; rating: number; text: string };
 
 const CONTRACT_TERMS = [
@@ -39,14 +40,35 @@ export default function ContractorDetail() {
   const insets = useSafeAreaInsets();
   const router = useRouter();
   const toast = useToast();
+  const { user } = useAuth();
 
   const [data, setData] = useState<Contractor | null>(null);
   const [reviews, setReviews] = useState<Review[]>([]);
   const [reviewOpen, setReviewOpen] = useState(false);
   const [contractOpen, setContractOpen] = useState(false);
+  const [coverageOpen, setCoverageOpen] = useState(false);
+  const [coverageVal, setCoverageVal] = useState("25");
   const [rating, setRating] = useState(5);
   const [text, setText] = useState("");
   const [submitting, setSubmitting] = useState(false);
+
+  const canEditCoverage = user?.role === "admin" || user?.role === "contractor";
+
+  const saveCoverage = async () => {
+    const miles = parseInt(coverageVal, 10);
+    if (!miles || miles < 1) {
+      toast.show("Enter a valid mileage", "error");
+      return;
+    }
+    try {
+      const r = await apiFetch<{ contractor: Contractor }>(`/contractors/${id}/coverage`, { method: "PUT", body: { miles } });
+      setData((prev) => (prev ? { ...prev, coverage_miles: r.contractor.coverage_miles } : prev));
+      setCoverageOpen(false);
+      toast.show("Coverage updated 🚗", "success");
+    } catch (e: any) {
+      toast.show(e.message, "error");
+    }
+  };
 
   const load = useCallback(async () => {
     try {
@@ -127,6 +149,25 @@ export default function ContractorDetail() {
                 <Text style={styles.serviceText}>{s}</Text>
               </View>
             ))}
+          </View>
+
+          {/* Coverage */}
+          <View style={styles.coverageCard}>
+            <View style={styles.coverageIcon}><Feather name="navigation" size={18} color={colors.brandSecondary} /></View>
+            <View style={{ flex: 1 }}>
+              <Text style={styles.coverageTitle}>Travels up to {data.coverage_miles ?? 25} miles</Text>
+              <Text style={styles.coverageSub}>Service area from {data.location}</Text>
+            </View>
+            {canEditCoverage && (
+              <Pressable
+                testID="edit-coverage-button"
+                style={styles.coverageEdit}
+                onPress={() => { setCoverageVal(String(data.coverage_miles ?? 25)); setCoverageOpen(true); }}
+              >
+                <Feather name="edit-2" size={14} color={colors.brand} />
+                <Text style={styles.coverageEditText}>Edit</Text>
+              </Pressable>
+            )}
           </View>
 
           {/* Job completion tracker */}
@@ -245,6 +286,29 @@ export default function ContractorDetail() {
           </View>
         </View>
       </Modal>
+      {/* Coverage editor */}
+      <Modal visible={coverageOpen} transparent animationType="slide" onRequestClose={() => setCoverageOpen(false)}>
+        <KeyboardAvoidingView behavior={Platform.OS === "ios" ? "padding" : "height"} style={styles.modalRoot}>
+          <Pressable style={styles.backdrop} onPress={() => setCoverageOpen(false)} />
+          <View style={[styles.sheet, { paddingBottom: insets.bottom + spacing.lg }]}>
+            <View style={styles.sheetHandle} />
+            <Text style={styles.sheetTitle}>Travel distance 🚗</Text>
+            <Text style={styles.contractIntro}>How many miles will this contractor travel for a job?</Text>
+            <TextInput
+              testID="coverage-input"
+              style={styles.reviewInput}
+              placeholder="e.g. 25"
+              placeholderTextColor={colors.muted}
+              keyboardType="number-pad"
+              value={coverageVal}
+              onChangeText={setCoverageVal}
+            />
+            <Pressable testID="save-coverage-button" style={styles.submitBtn} onPress={saveCoverage}>
+              <Text style={styles.submitText}>Save coverage</Text>
+            </Pressable>
+          </View>
+        </KeyboardAvoidingView>
+      </Modal>
     </View>
   );
 }
@@ -298,6 +362,12 @@ const styles = StyleSheet.create({
   submitBtn: { backgroundColor: colors.brand, height: 52, borderRadius: radius.md, alignItems: "center", justifyContent: "center", marginTop: spacing.xs },
   submitText: { color: "#fff", fontFamily: fonts.text, fontWeight: "700", fontSize: 16 },
   contractIntro: { fontFamily: fonts.text, color: colors.muted, lineHeight: 20 },
+  coverageCard: { flexDirection: "row", alignItems: "center", gap: spacing.md, backgroundColor: colors.surfaceSecondary, borderRadius: radius.lg, padding: spacing.lg, borderWidth: 1, borderColor: colors.border },
+  coverageIcon: { width: 44, height: 44, borderRadius: radius.md, backgroundColor: "#E7F0F4", alignItems: "center", justifyContent: "center" },
+  coverageTitle: { fontFamily: fonts.text, fontWeight: "700", color: colors.onSurface, fontSize: 15 },
+  coverageSub: { fontFamily: fonts.text, color: colors.muted, fontSize: 13 },
+  coverageEdit: { flexDirection: "row", alignItems: "center", gap: 5, borderWidth: 1.5, borderColor: colors.brand, paddingVertical: 6, paddingHorizontal: spacing.md, borderRadius: radius.pill },
+  coverageEditText: { fontFamily: fonts.text, fontWeight: "700", color: colors.brand, fontSize: 12 },
   termRow: { gap: 2, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: colors.divider, paddingBottom: spacing.sm },
   termLabel: { fontFamily: fonts.text, fontWeight: "800", color: colors.muted, fontSize: 12, textTransform: "uppercase", letterSpacing: 0.5 },
   termValue: { fontFamily: fonts.text, color: colors.onSurface, fontSize: 15 },

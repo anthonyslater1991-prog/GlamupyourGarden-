@@ -49,6 +49,8 @@ export default function Home() {
   const [pollOpen, setPollOpen] = useState(false);
   const [voted, setVoted] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
+  const [nearby, setNearby] = useState<any[]>([]);
+  const [nearbyDismissed, setNearbyDismissed] = useState(false);
 
   const load = useCallback(async () => {
     try {
@@ -66,6 +68,10 @@ export default function Home() {
           setPollOpen(true);
         }
       }
+      try {
+        const na = await apiFetch<{ alerts: any[] }>("/alerts/nearby");
+        setNearby(na.alerts);
+      } catch {}
     } catch (e: any) {
       console.log("home load", e.message);
     }
@@ -149,6 +155,28 @@ export default function Home() {
             </View>
           )}
         </View>
+
+        {/* Nearby top-rated pro alert */}
+        {nearby.length > 0 && !nearbyDismissed && (
+          <Pressable
+            testID="nearby-alert"
+            style={styles.alertCard}
+            onPress={() => router.push(`/contractor/${nearby[0].id}`)}
+          >
+            <View style={styles.alertIcon}>
+              <Feather name="bell" size={18} color="#fff" />
+            </View>
+            <View style={{ flex: 1 }}>
+              <Text style={styles.alertTitle}>Top-rated pro in your area! ⭐</Text>
+              <Text style={styles.alertSub}>
+                {nearby[0].name} · {nearby[0].distance_km} km away · {nearby[0].rating}★
+              </Text>
+            </View>
+            <Pressable testID="dismiss-nearby" hitSlop={10} onPress={() => setNearbyDismissed(true)}>
+              <Feather name="x" size={18} color={colors.muted} />
+            </Pressable>
+          </Pressable>
+        )}
 
         {/* Hero */}
         <Pressable style={styles.hero} testID="start-project-hero" onPress={() => router.push("/project/create")}>
@@ -314,6 +342,10 @@ const styles = StyleSheet.create({
   },
   liveDot: { width: 7, height: 7, borderRadius: 4, backgroundColor: colors.success },
   liveText: { fontFamily: fonts.text, fontSize: 12, color: colors.success, fontWeight: "700" },
+  alertCard: { flexDirection: "row", alignItems: "center", gap: spacing.md, backgroundColor: "#EFF4EE", borderWidth: 1, borderColor: colors.brand, marginHorizontal: spacing.lg, marginTop: spacing.md, padding: spacing.md, borderRadius: radius.md },
+  alertIcon: { width: 40, height: 40, borderRadius: radius.pill, backgroundColor: colors.brand, alignItems: "center", justifyContent: "center" },
+  alertTitle: { fontFamily: fonts.text, fontWeight: "800", color: colors.onSurface, fontSize: 14 },
+  alertSub: { fontFamily: fonts.text, color: colors.onSurfaceTertiary, fontSize: 12, marginTop: 1 },
   hero: {
     height: 220,
     margin: spacing.lg,
