@@ -17,6 +17,7 @@ import { Feather } from "@expo/vector-icons";
 import QRCode from "react-native-qrcode-svg";
 import * as Clipboard from "expo-clipboard";
 import { KeyboardAvoidingView } from "react-native-keyboard-controller";
+import { useRouter } from "expo-router";
 import { useAuth } from "@/src/context/AuthContext";
 import { useToast } from "@/src/components/Toast";
 import { apiFetch } from "@/src/lib/api";
@@ -28,6 +29,7 @@ export default function Profile() {
   const insets = useSafeAreaInsets();
   const { user, logout, setUser } = useAuth();
   const toast = useToast();
+  const router = useRouter();
   const [allowMsg, setAllowMsg] = useState(user?.allow_messages ?? true);
   const [qrOpen, setQrOpen] = useState(false);
   const [bioOpen, setBioOpen] = useState(false);
@@ -98,6 +100,21 @@ export default function Profile() {
             />
           </View>
         </View>
+
+        <Text style={styles.groupTitle}>Connect</Text>
+        <View style={styles.section}>
+          <Row icon="mail" label="Direct Messages" onPress={() => router.push("/messages")} testID="profile-messages" />
+          <Row icon="hash" label="Community Rooms" onPress={() => router.push("/rooms")} testID="profile-rooms" />
+        </View>
+
+        {user?.role === "admin" && (
+          <>
+            <Text style={styles.groupTitle}>Admin</Text>
+            <View style={styles.section}>
+              <Row icon="shield" label="Admin Dashboard" onPress={() => router.push("/admin")} testID="profile-admin" />
+            </View>
+          </>
+        )}
 
         <Text style={styles.groupTitle}>Legal & Safety</Text>
         <View style={styles.section}>

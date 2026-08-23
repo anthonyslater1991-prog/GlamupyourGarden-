@@ -15,7 +15,7 @@ import { Image } from "expo-image";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { Feather } from "@expo/vector-icons";
 import { KeyboardAvoidingView } from "react-native-keyboard-controller";
-import { useFocusEffect } from "expo-router";
+import { useFocusEffect, useRouter } from "expo-router";
 import * as Haptics from "expo-haptics";
 import { apiFetch, fileUrl } from "@/src/lib/api";
 import { uploadImage, pickFromLibrary } from "@/src/lib/upload";
@@ -36,6 +36,7 @@ type Post = {
 export default function Community() {
   const insets = useSafeAreaInsets();
   const toast = useToast();
+  const router = useRouter();
   const [posts, setPosts] = useState<Post[]>([]);
   const [refreshing, setRefreshing] = useState(false);
   const [loaded, setLoaded] = useState(false);
@@ -101,8 +102,18 @@ export default function Community() {
   return (
     <View style={styles.root}>
       <View style={[styles.header, { paddingTop: insets.top + spacing.md }]}>
-        <Text style={styles.title}>Community Wall 🌻</Text>
-        <Text style={styles.subtitle}>Share ideas, get inspired</Text>
+        <View style={{ flex: 1 }}>
+          <Text style={styles.title}>Community Wall 🌻</Text>
+          <Text style={styles.subtitle}>Share ideas, get inspired</Text>
+        </View>
+        <View style={styles.headerActions}>
+          <Pressable testID="open-rooms" style={styles.headerBtn} onPress={() => router.push("/rooms")}>
+            <Feather name="hash" size={20} color={colors.brand} />
+          </Pressable>
+          <Pressable testID="open-messages" style={styles.headerBtn} onPress={() => router.push("/messages")}>
+            <Feather name="mail" size={20} color={colors.brand} />
+          </Pressable>
+        </View>
       </View>
 
       <FlatList
@@ -199,7 +210,9 @@ export default function Community() {
 
 const styles = StyleSheet.create({
   root: { flex: 1, backgroundColor: colors.surface },
-  header: { paddingHorizontal: spacing.lg, paddingBottom: spacing.md },
+  header: { flexDirection: "row", alignItems: "center", paddingHorizontal: spacing.lg, paddingBottom: spacing.md },
+  headerActions: { flexDirection: "row", gap: spacing.sm },
+  headerBtn: { width: 42, height: 42, borderRadius: radius.pill, backgroundColor: "#EFF4EE", alignItems: "center", justifyContent: "center" },
   title: { fontFamily: fonts.display, fontSize: 28, color: colors.onSurface },
   subtitle: { fontFamily: fonts.text, color: colors.muted, fontSize: 14 },
   card: { backgroundColor: colors.surfaceSecondary, borderRadius: radius.lg, padding: spacing.lg, gap: spacing.sm, borderWidth: 1, borderColor: colors.border },

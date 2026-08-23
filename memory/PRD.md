@@ -29,7 +29,10 @@ Garden makeover app: users photograph their garden, choose changes, and generate
 - Community wall (post + image + like)
 - Contractors directory + detail (call, services, job progress tracker, auto-draft contract modal, reviews)
 - Weekly poll popup + voting, visit counter + live stats, social links top bar, QR share + copy link
-- Verified: 24/24 backend tests + frontend e2e passed.
+- Member Messaging: 1:1 DMs (opt-out aware, 403 blocked), conversations + unread counts
+- Community Rooms: General / Design / Plants / Help live chat (4s auto-refresh)
+- Admin Dashboard: seeded admin (admin@glamgarden.app), live visitor/active-user stats, all projects w/ owner info + redesign counts + detail modal, weekly poll rotation between presets
+- Verified: 39 backend tests + frontend e2e passed (iterations 1 & 2).
 
 ## Backlog
 ### P1

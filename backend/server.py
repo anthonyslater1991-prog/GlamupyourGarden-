@@ -636,6 +636,241 @@ async def chat_history(session_id: str, user: dict = Depends(get_current_user)):
 
 
 # ---------------------------------------------------------------------------
+# Member direct messaging + community rooms
+# ---------------------------------------------------------------------------
+class MessageCreate(BaseModel):
+    recipient_id: str
+    text: str
+
+
+class RoomMessageCreate(BaseModel):
+    text: str
+
+
+ROOMS = [
+    {"key": "general", "name": "General", "emoji": "🌿", "desc": "Chat about anything garden"},
+    {"key": "design", "name": "Design", "emoji": "🎨", "desc": "Layouts, styles & inspiration"},
+    {"key": "plants", "name": "Plants", "emoji": "🌸", "desc": "What to grow & how"},
+    {"key": "help", "name": "Help", "emoji": "🆘", "desc": "Ask the community"},
+]
+ROOM_KEYS = {r["key"] for r in ROOMS}
+
+
+def conv_id(a: str, b: str) -> str:
+    return "conv_" + "_".join(sorted([a, b]))
+
+
+async def get_admin_user(user: dict = Depends(get_current_user)) -> dict:
+    if user.get("role") != "admin":
+        raise HTTPException(status_code=403, detail="Admin access only")
+    return user
+
+
+@api_router.get("/members")
+async def list_members(user: dict = Depends(get_current_user)):
+    docs = await db.users.find({"user_id": {"$ne": user["user_id"]}}, {"_id": 0}).to_list(500)
+    members = [
+        {
+            "user_id": d["user_id"],
+            "name": d.get("name"),
+            "picture": d.get("picture"),
+            "role": d.get("role", "customer"),
+            "bio": d.get("bio", ""),
+            "allow_messages": d.get("allow_messages", True),
+        }
+        for d in docs
+        if d.get("role") != "admin"
+    ]
+    return {"members": members}
+
+
+@api_router.get("/conversations")
+async def conversations(user: dict = Depends(get_current_user)):
+    uid = user["user_id"]
+    msgs = await db.dm_messages.find(
+        {"$or": [{"sender_id": uid}, {"recipient_id": uid}]}, {"_id": 0}
+    ).sort("created_at", 1).to_list(2000)
+    convs: dict = {}
+    for m in msgs:
+        other = m["recipient_id"] if m["sender_id"] == uid else m["sender_id"]
+        entry = convs.setdefault(other, {"other_id": other, "last_text": "", "last_at": "", "unread": 0})
+        entry["last_text"] = m["text"]
+        entry["last_at"] = m["created_at"]
+        if m["recipient_id"] == uid and not m.get("read"):
+            entry["unread"] += 1
+    result = []
+    for other_id, entry in convs.items():
+        u = await db.users.find_one({"user_id": other_id}, {"_id": 0})
+        if not u:
+            continue
+        entry["name"] = u.get("name")
+        entry["picture"] = u.get("picture")
+        result.append(entry)
+    result.sort(key=lambda x: x["last_at"], reverse=True)
+    return {"conversations": result}
+
+
+@api_router.get("/messages/{other_id}")
+async def get_messages(other_id: str, user: dict = Depends(get_current_user)):
+    uid = user["user_id"]
+    cid = conv_id(uid, other_id)
+    msgs = await db.dm_messages.find({"conversation_id": cid}, {"_id": 0}).sort("created_at", 1).to_list(1000)
+    await db.dm_messages.update_many(
+        {"conversation_id": cid, "recipient_id": uid, "read": {"$ne": True}}, {"$set": {"read": True}}
+    )
+    other = await db.users.find_one({"user_id": other_id}, {"_id": 0})
+    other_pub = {"user_id": other_id, "name": other.get("name"), "picture": other.get("picture")} if other else None
+    return {"messages": msgs, "other": other_pub}
+
+
+@api_router.post("/messages")
+async def send_message(body: MessageCreate, user: dict = Depends(get_current_user)):
+    if not body.text.strip():
+        raise HTTPException(status_code=400, detail="Empty message")
+    recipient = await db.users.find_one({"user_id": body.recipient_id})
+    if not recipient:
+        raise HTTPException(status_code=404, detail="Member not found")
+    if not recipient.get("allow_messages", True):
+        raise HTTPException(status_code=403, detail="This member has turned off messages")
+    msg = {
+        "id": new_id("dm"),
+        "conversation_id": conv_id(user["user_id"], body.recipient_id),
+        "sender_id": user["user_id"],
+        "recipient_id": body.recipient_id,
+        "text": body.text.strip(),
+        "read": False,
+        "created_at": now_iso(),
+    }
+    await db.dm_messages.insert_one(msg)
+    msg.pop("_id", None)
+    return {"message": msg}
+
+
+@api_router.get("/rooms")
+async def list_rooms(user: dict = Depends(get_current_user)):
+    out = []
+    for r in ROOMS:
+        count = await db.room_messages.count_documents({"room": r["key"]})
+        last = await db.room_messages.find({"room": r["key"]}, {"_id": 0}).sort("created_at", -1).to_list(1)
+        out.append({**r, "message_count": count, "last_text": last[0]["text"] if last else None})
+    return {"rooms": out}
+
+
+@api_router.get("/rooms/{room}/messages")
+async def room_messages(room: str, user: dict = Depends(get_current_user)):
+    if room not in ROOM_KEYS:
+        raise HTTPException(status_code=404, detail="Room not found")
+    msgs = await db.room_messages.find({"room": room}, {"_id": 0}).sort("created_at", 1).to_list(500)
+    return {"messages": msgs}
+
+
+@api_router.post("/rooms/{room}/messages")
+async def post_room_message(room: str, body: RoomMessageCreate, user: dict = Depends(get_current_user)):
+    if room not in ROOM_KEYS:
+        raise HTTPException(status_code=404, detail="Room not found")
+    if not body.text.strip():
+        raise HTTPException(status_code=400, detail="Empty message")
+    msg = {
+        "id": new_id("rm"),
+        "room": room,
+        "sender_id": user["user_id"],
+        "sender_name": user.get("name") or "Gardener",
+        "sender_picture": user.get("picture"),
+        "text": body.text.strip(),
+        "created_at": now_iso(),
+    }
+    await db.room_messages.insert_one(msg)
+    msg.pop("_id", None)
+    return {"message": msg}
+
+
+# ---------------------------------------------------------------------------
+# Admin dashboard
+# ---------------------------------------------------------------------------
+@api_router.get("/admin/overview")
+async def admin_overview(admin: dict = Depends(get_admin_user)):
+    now = datetime.now(timezone.utc)
+
+    async def active_since(delta):
+        ids = await db.visits.distinct("user_id", {"at": {"$gte": now - delta}, "user_id": {"$ne": "anon"}})
+        return len(ids)
+
+    total_users = await db.users.count_documents({"role": {"$ne": "admin"}})
+    total_projects = await db.projects.count_documents({})
+    total_designs_docs = await db.projects.find({}, {"_id": 0, "designs": 1}).to_list(5000)
+    total_designs = sum(len(p.get("designs", [])) for p in total_designs_docs)
+    total_posts = await db.wall_posts.count_documents({})
+    total_dms = await db.dm_messages.count_documents({})
+    total_room = await db.room_messages.count_documents({})
+    active_project_owners = len(await db.projects.distinct("owner_id", {"updated_at": {"$gte": (now - timedelta(hours=24)).isoformat()}}))
+
+    return {
+        "visitors": {
+            "total": await db.visits.count_documents({}),
+            "active_5m": await db.visits.count_documents({"at": {"$gte": now - timedelta(minutes=5)}}),
+            "active_1h": await db.visits.count_documents({"at": {"$gte": now - timedelta(hours=1)}}),
+            "active_24h": await db.visits.count_documents({"at": {"$gte": now - timedelta(hours=24)}}),
+        },
+        "active_users": {
+            "last_5m": await active_since(timedelta(minutes=5)),
+            "last_1h": await active_since(timedelta(hours=1)),
+            "last_24h": await active_since(timedelta(hours=24)),
+        },
+        "totals": {
+            "users": total_users,
+            "projects": total_projects,
+            "designs": total_designs,
+            "wall_posts": total_posts,
+            "direct_messages": total_dms,
+            "room_messages": total_room,
+            "active_projects_24h": active_project_owners,
+        },
+    }
+
+
+@api_router.get("/admin/projects")
+async def admin_projects(admin: dict = Depends(get_admin_user)):
+    projects = await db.projects.find({}, {"_id": 0}).sort("updated_at", -1).to_list(500)
+    owners = {}
+    out = []
+    for p in projects:
+        oid = p["owner_id"]
+        if oid not in owners:
+            u = await db.users.find_one({"user_id": oid}, {"_id": 0})
+            owners[oid] = u or {}
+        u = owners[oid]
+        out.append({
+            "id": p["id"],
+            "title": p["title"],
+            "owner_name": u.get("name", "Unknown"),
+            "owner_email": u.get("email", ""),
+            "design_count": len(p.get("designs", [])),
+            "original_path": p.get("original_path"),
+            "latest_image": (p["designs"][-1]["image_path"] if p.get("designs") else None),
+            "updated_at": p.get("updated_at"),
+        })
+    return {"projects": out}
+
+
+@api_router.get("/admin/polls")
+async def admin_polls(admin: dict = Depends(get_admin_user)):
+    polls = await db.polls.find({}, {"_id": 0}).to_list(100)
+    return {"polls": polls}
+
+
+@api_router.post("/admin/polls/{poll_id}/activate")
+async def activate_poll(poll_id: str, admin: dict = Depends(get_admin_user)):
+    poll = await db.polls.find_one({"id": poll_id})
+    if not poll:
+        raise HTTPException(status_code=404, detail="Not found")
+    await db.polls.update_many({}, {"$set": {"active": False}})
+    await db.polls.update_one({"id": poll_id}, {"$set": {"active": True}})
+    doc = await db.polls.find_one({"id": poll_id}, {"_id": 0})
+    return {"poll": doc}
+
+
+
+# ---------------------------------------------------------------------------
 # Seed data
 # ---------------------------------------------------------------------------
 SEED_CONTRACTORS = [
@@ -663,17 +898,49 @@ async def startup():
         for c in SEED_CONTRACTORS:
             await db.contractors.insert_one({**c, "id": new_id("con")})
         logger.info("seeded contractors")
-    if await db.polls.count_documents({"active": True}) == 0:
-        await db.polls.insert_one({
-            "id": new_id("poll"),
-            "question": "What's the #1 upgrade you want for your garden this season? 🌸",
-            "options": ["A cosy patio area", "More flowers & colour", "A water feature", "Better lighting"],
-            "votes": [0, 0, 0, 0],
-            "active": True,
-            "week": datetime.now(timezone.utc).isocalendar()[1],
-            "created_at": now_iso(),
-        })
-        logger.info("seeded poll")
+
+    # Seed default admin account
+    if await db.users.count_documents({"role": "admin"}) == 0:
+        admin_hash = bcrypt.hashpw("GlamAdmin2026!".encode(), bcrypt.gensalt()).decode()
+        try:
+            await db.users.insert_one({
+                "user_id": new_id("user"),
+                "name": "Garden Admin",
+                "email": "admin@glamgarden.app",
+                "password_hash": admin_hash,
+                "role": "admin",
+                "picture": None,
+                "bio": "",
+                "allow_messages": False,
+                "created_at": now_iso(),
+            })
+            logger.info("seeded admin user")
+        except Exception as e:
+            logger.warning(f"admin seed warn: {e}")
+
+    # Seed preset polls (only one active at a time)
+    if await db.polls.count_documents({}) == 0:
+        presets = [
+            {"question": "What's the #1 upgrade you want for your garden this season? 🌸",
+             "options": ["A cosy patio area", "More flowers & colour", "A water feature", "Better lighting"]},
+            {"question": "Which garden vibe is calling your name? 🌿",
+             "options": ["Tranquil zen retreat", "Wild cottage garden", "Sleek & modern", "Family fun space"]},
+            {"question": "What helps most when planning a garden? ☀️",
+             "options": ["Seeing an AI redesign", "Advice from pros", "Community ideas", "Budget planning"]},
+            {"question": "Which wildlife would you love to attract? 🐝",
+             "options": ["Bees & butterflies", "Birds", "Hedgehogs", "All of them!"]},
+        ]
+        for i, p in enumerate(presets):
+            await db.polls.insert_one({
+                "id": new_id("poll"),
+                "question": p["question"],
+                "options": p["options"],
+                "votes": [0] * len(p["options"]),
+                "active": i == 0,
+                "week": datetime.now(timezone.utc).isocalendar()[1],
+                "created_at": now_iso(),
+            })
+        logger.info("seeded preset polls")
 
 
 @app.on_event("shutdown")
