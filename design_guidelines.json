@@ -1,0 +1,166 @@
+{
+  "app_name": "Glam up your Garden",
+  "personality": "8 Hand-Drawn / Journal",
+  "personality_one_liner": "A tranquil, organic, and restorative space that blends the elegance of a garden makeover with the approachable warmth of a personal journal.",
+  "color": {
+    "surface": "#F8F9F5",
+    "onSurface": "#2C352E",
+    "surfaceSecondary": "#FFFFFF",
+    "onSurfaceSecondary": "#3A453C",
+    "surfaceTertiary": "#EAECE5",
+    "onSurfaceTertiary": "#4A564C",
+    "surfaceInverse": "#2A362E",
+    "onSurfaceInverse": "#F4F6F0",
+    "brand": "#4A7C59",
+    "brandPrimary": "#4A7C59",
+    "onBrandPrimary": "#FFFFFF",
+    "brandSecondary": "#6BA3BE",
+    "onBrandSecondary": "#FFFFFF",
+    "brandTertiary": "#EAB364",
+    "onBrandTertiary": "#3E2B12",
+    "success": "#598A66",
+    "onSuccess": "#FFFFFF",
+    "warning": "#EAB364",
+    "onWarning": "#3E2B12",
+    "error": "#C85C5C",
+    "onError": "#FFFFFF",
+    "info": "#6BA3BE",
+    "onInfo": "#FFFFFF",
+    "border": "#DCE2DA",
+    "borderStrong": "#B8C4B5",
+    "divider": "#E6EBE4"
+  },
+  "typography": {
+    "displayFontFamily": "Fraunces",
+    "textFontFamily": "Nunito",
+    "scale": {
+      "sm": 12,
+      "base": 14,
+      "lg": 16,
+      "xl": 20,
+      "2xl": 24
+    }
+  },
+  "spacing": {
+    "rule": "Generous, breathable, and slightly irregular layouts. Whitespace should feel calm and restorative. Use padding intentionally to create a scrap-book or journal-like layered rhythm.",
+    "xs": 4,
+    "sm": 8,
+    "md": 12,
+    "lg": 16,
+    "xl": 24,
+    "2xl": 32,
+    "3xl": 48
+  },
+  "radius_tokens": {
+    "sm": 8,
+    "md": 16,
+    "lg": 24,
+    "pill": 999
+  },
+  "shadow_tier": "0",
+  "navigation": "bottom_tabs",
+  "icon_set": "Feather",
+  "glassmorphism": {
+    "enabled": true,
+    "do's": [
+      "Use heavy tint + blur for the shoppable product hotspots (+ markers) floating over AI images to guarantee they stand out against complex garden scenes.",
+      "Use for the persistent floating AI Garden Assistant chatbot button.",
+      "Use on sticky headers if content scrolls behind them."
+    ],
+    "dont's": [
+      "Do not use glass on body content cards or directory listings, which should feel paper-like and tactile."
+    ]
+  },
+  "platform_libraries": {
+    "glass": {
+      "ios": "expo-glass-effect",
+      "android": "expo-blur",
+      "low_end_android_fallback": "solid surfaceSecondary"
+    },
+    "image": "expo-image",
+    "blur": "expo-blur",
+    "bottom_sheet": "@gorhom/bottom-sheet",
+    "animation": "react-native-reanimated",
+    "gesture": "react-native-gesture-handler"
+  },
+  "screens": [
+    {
+      "name": "Home",
+      "purpose": "A welcoming dashboard combining quick actions, community polls, and personalized project tracking.",
+      "states": {
+        "loading": "Soft pulsing skeleton shapes representing organic card layouts.",
+        "empty": "Tranquil garden illustration with a gentle prompt to start a new project.",
+        "error": "Calm error message with a 'Try Again' button, ensuring the user doesn't feel stressed."
+      },
+      "layout": "Top bar features a subtle visit counter and grouped social icons (Facebook, Instagram, TikTok, YouTube). Immediately below is a large, immersive hero card with a tranquil water/sky background, gradient scrim, and a primary 'Start Project' CTA. Weekly poll appears as a soft, layered modal popup overlay upon first load. Below the hero, horizontal scrolling list of 'My Projects'. Persistent floating chatbot button at the bottom right corner (safe area cleared)."
+    },
+    {
+      "name": "CreateProject",
+      "purpose": "A calming, guided flow to upload or capture a photo of the user's current garden.",
+      "states": {
+        "loading": "Full-screen camera initialization view or photo uploading spinner.",
+        "empty": "N/A",
+        "error": "Error toast indicating camera permission denied or upload failure."
+      },
+      "layout": "Focus heavily on the camera viewfinder or photo picker gallery. Use soft, semi-transparent overlays for the camera controls. A primary CTA 'Redesign with AI' pinned to the bottom. Keep the interface minimal to let the user focus on the photo framing."
+    },
+    {
+      "name": "ProjectRedesignViewer",
+      "purpose": "The core 'magic' screen displaying the AI-generated garden transformation with shoppable affiliate hotspots.",
+      "states": {
+        "loading": "Lottie animation of growing plants/flowers or a soft botanical progress indicator.",
+        "empty": "N/A",
+        "error": "Retry button overlaid on the original uploaded image."
+      },
+      "layout": "Edge-to-edge image view of the garden. A smooth interactive Before/After toggle/slider at the bottom above the safe area. Overlaid on the 'After' image are scattered shoppable product hotspots (+ icons in glassmorphism circles). Tapping a hotspot opens a '@gorhom/bottom-sheet' revealing the product image, description, and link to the retailer. Top header contains a 'Save' and 'Share' (QR code) icon."
+    },
+    {
+      "name": "CommunityWall",
+      "purpose": "A serene, Pinterest-style feed for users to share and browse garden ideas.",
+      "states": {
+        "loading": "Staggered skeleton blocks imitating masonry cards.",
+        "empty": "Illustration of a solitary bench under a tree with a prompt to 'Be the first to share an idea'.",
+        "error": "Standard text prompt to reload the feed."
+      },
+      "layout": "A 2-column masonry grid (or staggered 1-column if simpler) of user-shared garden redesigns. Cards have irregular radii (mix of md and lg) to feel organic and scrapbook-like. Each card shows the user's avatar, a short caption, and the main image. A sticky 'Share to Wall' FAB at the bottom center."
+    },
+    {
+      "name": "Contractors",
+      "purpose": "A directory to find, review, and track professional landscapers and gardeners.",
+      "states": {
+        "loading": "Standard list skeleton.",
+        "empty": "Illustration of gardening tools and text indicating no contractors found in the area.",
+        "error": "Retry button."
+      },
+      "layout": "List-based directory. Each contractor card features their profile photo, a prominent TripAdvisor-style star rating (using brandTertiary for stars), and contact buttons (Phone, Message). Inside a contractor's detail view, display the 'completion tracker for jobs' as a soft, organic progress bar, along with generated contracts and a review feed."
+    }
+  ],
+  "images": {
+    "home_hero_bg": {
+      "url": "https://images.pexels.com/photos/38080084/pexels-photo-38080084.jpeg?auto=compress&cs=tinysrgb&dpr=2&h=650&w=940",
+      "alt": "A serene garden fountain surrounded by lush greenery and statues, under a clear blue sky"
+    },
+    "project_before_demo": {
+      "url": "https://images.pexels.com/photos/15633841/pexels-photo-15633841.jpeg?auto=compress&cs=tinysrgb&dpr=2&h=650&w=940",
+      "alt": "Abandoned rustic house with overgrown garden and scattered trash outdoors"
+    },
+    "project_after_demo": {
+      "url": "https://images.unsplash.com/photo-1634316888962-75074307f81c?crop=entropy&cs=srgb&fm=jpg&ixid=M3w4NjAzOTB8MHwxfHNlYXJjaHwxfHxiZWF1dGlmdWwlMjBzdW5ueSUyMGxhbmRzY2FwZWQlMjBiYWNreWFyZCUyMGdhcmRlbnxlbnwwfHx8fDE3ODc0ODY4Njd8MA&ixlib=rb-4.1.0&q=85",
+      "alt": "A beautiful sunny landscaped backyard patio with a table, chairs, and bench"
+    }
+  },
+  "haptics": {
+    "primary_button_press": "impactLight",
+    "hotspot_tap": "impactMedium",
+    "before_after_toggle": "selection",
+    "poll_submit": "notificationSuccess",
+    "chatbot_open": "impactLight"
+  },
+  "instructions_to_main_agent": [
+    "Strictly follow the color palette mapped in this file. The blue (brandSecondary) was explicitly approved in the problem statement for sky/water elements, so it overrides the standard blue ban.",
+    "Implement the shoppable hotspots on the Redesign screen using absolute positioning over the image. These hotspots MUST use glassmorphism (expo-blur) with a heavy tint underneath to guarantee the '+' icon is readable against busy garden photos.",
+    "Every image used as a background (e.g., home_hero_bg) MUST have a linear gradient scrim (transparent to surfaceInverse) layered over it before rendering text on top to ensure WCAG AA contrast.",
+    "The AI chatbot is a persistent floating action button (FAB) that stays accessible across primary screens. Ensure it sits safely above the bottom tab bar and respects the safe area.",
+    "Use the 'Fraunces' font for display/headings to inject the 'Glam up' aesthetic, while utilizing 'Nunito' for body text to maintain the approachable, organic feel."
+  ]
+}
