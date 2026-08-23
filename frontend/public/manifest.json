@@ -1,0 +1,26 @@
+{
+  "name": "Glam up your Garden",
+  "short_name": "Glam Garden",
+  "description": "Redesign your garden with AI, shop the look, chat with the community and hire trusted contractors.",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#F5F8F2",
+  "theme_color": "#4A7C59",
+  "lang": "en",
+  "icons": [
+    {
+      "src": "/icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "/icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any"
+    }
+  ]
+}

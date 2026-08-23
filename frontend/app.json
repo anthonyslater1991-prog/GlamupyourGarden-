@@ -1,6 +1,6 @@
 {
   "expo": {
-    "name": "frontend",
+    "name": "Glam up your Garden",
     "slug": "frontend",
     "version": "1.0.0",
     "orientation": "portrait",
@@ -19,7 +19,7 @@
     "android": {
       "adaptiveIcon": {
         "foregroundImage": "./assets/images/adaptive-icon.png",
-        "backgroundColor": "#000000"
+        "backgroundColor": "#2E5C42"
       },
       "edgeToEdgeEnabled": true,
       "package": "com.emergent.outdooruplift.nn0nql",
@@ -28,7 +28,14 @@
     "web": {
       "bundler": "metro",
       "output": "single",
-      "favicon": "./assets/images/favicon.png"
+      "favicon": "./assets/images/favicon.png",
+      "name": "Glam up your Garden",
+      "shortName": "Glam Garden",
+      "themeColor": "#4A7C59",
+      "backgroundColor": "#F5F8F2",
+      "display": "standalone",
+      "startUrl": "/",
+      "lang": "en"
     },
     "plugins": [
       "expo-router",

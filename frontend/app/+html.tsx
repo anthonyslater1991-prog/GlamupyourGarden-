@@ -10,8 +10,21 @@ export default function Root({ children }: PropsWithChildren) {
         <meta httpEquiv="X-UA-Compatible" content="IE=edge" />
         <meta
           name="viewport"
-          content="width=device-width, initial-scale=1, shrink-to-fit=no"
+          content="width=device-width, initial-scale=1, shrink-to-fit=no, viewport-fit=cover"
         />
+
+        {/* PWA — installable "Add to Home Screen" on phone & desktop */}
+        <title>Glam up your Garden</title>
+        <link rel="manifest" href="/manifest.json" />
+        <meta name="theme-color" content="#4A7C59" />
+        <meta name="description" content="Redesign your garden with AI, shop the look, chat with the community and hire trusted contractors." />
+        <link rel="icon" href="/icon-192.png" />
+        {/* iOS home-screen install */}
+        <meta name="apple-mobile-web-app-capable" content="yes" />
+        <meta name="mobile-web-app-capable" content="yes" />
+        <meta name="apple-mobile-web-app-status-bar-style" content="default" />
+        <meta name="apple-mobile-web-app-title" content="Glam up your Garden" />
+        <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
         {/*
           Disable body scrolling on web to make ScrollView components work correctly.
           If you want to enable scrolling, remove `ScrollViewStyleReset` and

@@ -94,6 +94,13 @@ Garden makeover app: users photograph their garden, choose changes, and generate
 - Admin still has manual release + configurable commission % (Admin > Deposit releases). Real transfers need STRIPE_CONNECT_SECRET_KEY (sk_test_...); without it, releases stay pending gracefully.
 - Verified: 8/8 backend pytest + curl/DB-sim; frontend contract Payments/Quote/Signatures + My Agreements + Home reminder/counters visually confirmed.
 
+## Implemented (2026-06 fork) — iteration 11: Installable PWA (Add to Home Screen)
+- App display name set to "Glam up your Garden" (app.json + web).
+- PWA web manifest (/manifest.json) + install icons in frontend/public (icon-192, icon-512, apple-touch-icon) served at web root.
+- Runtime head injection (src/lib/pwa.ts, called from app/_layout.tsx) adds <link rel=manifest>, apple-touch-icon and apple-mobile-web-app meta on web — needed because output:"single" SPA doesn't use +html.tsx. Verified live: manifest+icons 200, DOM tags present, title correct.
+- Custom branded app tile designed (green gradient + sun + cream sprout) used for home-screen/desktop icon and Android adaptive icon (bg #2E5C42).
+- NOTE: installability applies to the hosted WEB build. User must redeploy (Publish → Deploy) to push to production; if the production URL still serves the Expo Go QR page rather than the web app, that's a hosting/deployment matter for Emergent support.
+
 ## Backlog
 ### P1
 - Real member-to-member messaging + community chat room (opt-out aware)

@@ -12,6 +12,7 @@ import { useIconFonts } from "@/src/hooks/use-icon-fonts";
 import { AuthProvider } from "@/src/context/AuthContext";
 import { UnreadProvider } from "@/src/context/UnreadContext";
 import { ToastProvider } from "@/src/components/Toast";
+import { installPwaHead } from "@/src/lib/pwa";
 
 // Disable logbox errors etc so that users can see the app
 // and agent works as expected.
@@ -31,6 +32,10 @@ export default function RootLayout() {
   });
 
   const ready = (iconsLoaded || iconsError) && (appFontsLoaded || appFontsError);
+
+  useEffect(() => {
+    installPwaHead();
+  }, []);
 
   useEffect(() => {
     if (ready) {
