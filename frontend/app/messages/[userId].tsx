@@ -11,9 +11,10 @@ import { useAuth } from "@/src/context/AuthContext";
 import { useUnread } from "@/src/context/UnreadContext";
 import { useToast } from "@/src/components/Toast";
 import ImageViewer from "@/src/components/ImageViewer";
+import SavePhotoSheet from "@/src/components/SavePhotoSheet";
 import { colors, spacing, radius, fonts } from "@/src/theme";
 
-type Msg = { id: string; sender_id: string; recipient_id: string; text: string; image_path?: string; created_at: string };
+type Msg = { id: string; sender_id: string; recipient_id: string; text: string; image_path?: string; read?: boolean; created_at: string };
 
 const REASONS = ["Spam or scam", "Harassment or bullying", "Inappropriate content", "Other"];
 
@@ -33,6 +34,8 @@ export default function DMThread() {
   const [reportOpen, setReportOpen] = useState(false);
   const [uploading, setUploading] = useState(false);
   const [viewerUri, setViewerUri] = useState<string | undefined>(undefined);
+  const [savePath, setSavePath] = useState<string | undefined>(undefined);
+  const [saveOpen, setSaveOpen] = useState(false);
 
   const load = useCallback(async () => {
     try {
@@ -144,12 +147,18 @@ export default function DMThread() {
               <View style={[styles.row, mine ? styles.rowMine : styles.rowOther]}>
                 <View style={[styles.bubble, mine ? styles.mine : styles.otherB, item.image_path && styles.imgBubble]}>
                   {item.image_path && (
-                    <Pressable testID={`dm-image-${item.id}`} onPress={() => setViewerUri(fileUrl(item.image_path))}>
+                    <Pressable testID={`dm-image-${item.id}`} onPress={() => { setViewerUri(fileUrl(item.image_path)); setSavePath(item.image_path); }}>
                       <Image source={{ uri: fileUrl(item.image_path) }} style={styles.msgImage} contentFit="cover" />
                     </Pressable>
                   )}
                   {!!item.text && (
                     <Text style={[styles.bubbleText, mine && { color: "#fff" }, item.image_path && { marginTop: spacing.xs }]}>{item.text}</Text>
+                  )}
+                  {mine && (
+                    <View style={styles.receiptRow}>
+                      <Feather name={item.read ? "check-circle" : "check"} size={12} color={item.read ? "#BFE3C6" : "rgba(255,255,255,0.65)"} />
+                      <Text style={styles.receiptText}>{item.read ? "Seen" : "Sent"}</Text>
+                    </View>
                   )}
                 </View>
               </View>
@@ -210,7 +219,13 @@ export default function DMThread() {
         </View>
       </Modal>
 
-      <ImageViewer uri={viewerUri} visible={!!viewerUri} onClose={() => setViewerUri(undefined)} />
+      <ImageViewer
+        uri={viewerUri}
+        visible={!!viewerUri}
+        onClose={() => setViewerUri(undefined)}
+        onSave={() => { setViewerUri(undefined); setSaveOpen(true); }}
+      />
+      <SavePhotoSheet visible={saveOpen} imagePath={savePath} onClose={() => setSaveOpen(false)} />
     </View>
   );
 }
@@ -229,6 +244,8 @@ const styles = StyleSheet.create({
   mine: { backgroundColor: colors.brand, borderBottomRightRadius: radius.sm },
   otherB: { backgroundColor: colors.surfaceSecondary, borderWidth: 1, borderColor: colors.border, borderBottomLeftRadius: radius.sm },
   bubbleText: { fontFamily: fonts.text, fontSize: 15, color: colors.onSurface, lineHeight: 21 },
+  receiptRow: { flexDirection: "row", alignItems: "center", gap: 3, alignSelf: "flex-end", marginTop: 3 },
+  receiptText: { fontFamily: fonts.text, fontSize: 10, color: "rgba(255,255,255,0.75)", fontWeight: "600" },
   emptyWrap: { alignItems: "center", paddingTop: spacing["3xl"], gap: spacing.sm },
   emptyEmoji: { fontSize: 40 },
   emptyText: { fontFamily: fonts.text, color: colors.muted },

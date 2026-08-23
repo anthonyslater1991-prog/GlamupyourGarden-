@@ -7,6 +7,7 @@ import {
   Pressable,
   Modal,
   TextInput,
+  ScrollView,
   RefreshControl,
   ActivityIndicator,
   Platform,
@@ -23,6 +24,7 @@ import { useToast } from "@/src/components/Toast";
 import ChatFab from "@/src/components/ChatFab";
 import { colors, spacing, radius, fonts } from "@/src/theme";
 
+type Comment = { id: string; author_name: string; author_picture?: string; text: string; created_at: string };
 type Post = {
   id: string;
   author_name: string;
@@ -30,8 +32,12 @@ type Post = {
   caption: string;
   image_path?: string;
   likes: number;
+  reactions?: Record<string, number>;
+  comments?: Comment[];
   created_at: string;
 };
+
+const REACTIONS = ["❤️", "🌿", "😍", "👏", "🐝"];
 
 export default function Community() {
   const insets = useSafeAreaInsets();
@@ -44,11 +50,14 @@ export default function Community() {
   const [caption, setCaption] = useState("");
   const [imageUri, setImageUri] = useState<string | null>(null);
   const [posting, setPosting] = useState(false);
+  const [activePost, setActivePost] = useState<Post | null>(null);
+  const [commentText, setCommentText] = useState("");
 
   const load = useCallback(async () => {
     try {
       const r = await apiFetch<{ posts: Post[] }>("/wall");
       setPosts(r.posts);
+      setActivePost((prev) => (prev ? r.posts.find((p) => p.id === prev.id) || prev : prev));
     } catch {}
     setLoaded(true);
   }, []);
@@ -61,12 +70,29 @@ export default function Community() {
     setRefreshing(false);
   };
 
-  const like = async (id: string) => {
+  const react = async (id: string, emoji: string) => {
     if (Platform.OS !== "web") Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-    setPosts((prev) => prev.map((p) => (p.id === id ? { ...p, likes: p.likes + 1 } : p)));
+    setPosts((prev) =>
+      prev.map((p) =>
+        p.id === id ? { ...p, reactions: { ...(p.reactions || {}), [emoji]: ((p.reactions || {})[emoji] || 0) + 1 } } : p
+      )
+    );
     try {
-      await apiFetch(`/wall/${id}/like`, { method: "POST" });
+      await apiFetch(`/wall/${id}/react`, { method: "POST", body: { emoji } });
     } catch {}
+  };
+
+  const addComment = async () => {
+    if (!activePost || !commentText.trim()) return;
+    const text = commentText.trim();
+    setCommentText("");
+    try {
+      const r = await apiFetch<{ post: Post }>(`/wall/${activePost.id}/comment`, { method: "POST", body: { text } });
+      setActivePost(r.post);
+      setPosts((prev) => prev.map((p) => (p.id === r.post.id ? r.post : p)));
+    } catch (e: any) {
+      toast.show(e.message || "Failed to comment", "error");
+    }
   };
 
   const pickImage = async () => {
@@ -147,10 +173,21 @@ export default function Community() {
               </View>
               {img && <Image source={{ uri: img }} style={styles.postImg} contentFit="cover" />}
               <Text style={styles.caption}>{item.caption}</Text>
-              <Pressable testID={`like-${item.id}`} style={styles.likeRow} onPress={() => like(item.id)}>
-                <Feather name="heart" size={17} color={colors.error} />
-                <Text style={styles.likeText}>{item.likes}</Text>
-              </Pressable>
+              <View style={styles.reactionBar}>
+                {REACTIONS.map((e) => {
+                  const count = item.reactions?.[e] || 0;
+                  return (
+                    <Pressable key={e} testID={`react-${item.id}-${e}`} style={styles.reactBtn} onPress={() => react(item.id, e)}>
+                      <Text style={styles.reactEmoji}>{e}</Text>
+                      {count > 0 && <Text style={styles.reactCount}>{count}</Text>}
+                    </Pressable>
+                  );
+                })}
+                <Pressable testID={`comments-${item.id}`} style={styles.commentBtn} onPress={() => setActivePost(item)}>
+                  <Feather name="message-circle" size={16} color={colors.brand} />
+                  <Text style={styles.commentBtnText}>{item.comments?.length || 0}</Text>
+                </Pressable>
+              </View>
             </View>
           );
         }}
@@ -204,6 +241,53 @@ export default function Community() {
           </View>
         </KeyboardAvoidingView>
       </Modal>
+
+      {/* Comments modal */}
+      <Modal visible={!!activePost} transparent animationType="slide" onRequestClose={() => setActivePost(null)}>
+        <KeyboardAvoidingView behavior={Platform.OS === "ios" ? "padding" : "height"} style={styles.modalRoot}>
+          <Pressable style={styles.modalBackdrop} onPress={() => setActivePost(null)} />
+          <View style={[styles.commentSheet, { paddingBottom: insets.bottom + spacing.sm }]}>
+            <View style={styles.sheetHandle} />
+            <Text style={styles.sheetTitle}>Comments 💬</Text>
+            <ScrollView style={{ maxHeight: 340 }} showsVerticalScrollIndicator={false}>
+              {(activePost?.comments || []).length === 0 ? (
+                <Text style={styles.noComments}>No comments yet — be the first! 🌸</Text>
+              ) : (
+                (activePost?.comments || []).map((c) => (
+                  <View key={c.id} style={styles.commentItem} testID={`comment-${c.id}`}>
+                    <View style={styles.cAvatar}><Text style={styles.cAvatarText}>{(c.author_name || "?")[0].toUpperCase()}</Text></View>
+                    <View style={{ flex: 1 }}>
+                      <Text style={styles.cName}>{c.author_name}</Text>
+                      <Text style={styles.cText}>{c.text}</Text>
+                    </View>
+                  </View>
+                ))
+              )}
+            </ScrollView>
+            <View style={styles.emojiRow}>
+              {REACTIONS.map((e) => (
+                <Pressable key={e} testID={`emoji-insert-${e}`} onPress={() => setCommentText((t) => t + e)}>
+                  <Text style={styles.emojiInsert}>{e}</Text>
+                </Pressable>
+              ))}
+            </View>
+            <View style={styles.commentInputRow}>
+              <TextInput
+                testID="comment-input"
+                style={styles.commentInput}
+                placeholder="Add a comment..."
+                placeholderTextColor={colors.muted}
+                value={commentText}
+                onChangeText={setCommentText}
+                multiline
+              />
+              <Pressable testID="send-comment" style={styles.commentSend} onPress={addComment}>
+                <Feather name="send" size={18} color="#fff" />
+              </Pressable>
+            </View>
+          </View>
+        </KeyboardAvoidingView>
+      </Modal>
     </View>
   );
 }
@@ -223,6 +307,25 @@ const styles = StyleSheet.create({
   authorName: { fontFamily: fonts.text, fontWeight: "700", color: colors.onSurface },
   postImg: { width: "100%", height: 200, borderRadius: radius.md, backgroundColor: colors.surfaceTertiary },
   caption: { fontFamily: fonts.text, color: colors.onSurfaceSecondary, fontSize: 15, lineHeight: 21 },
+  reactionBar: { flexDirection: "row", alignItems: "center", gap: spacing.xs, flexWrap: "wrap", marginTop: spacing.xs },
+  reactBtn: { flexDirection: "row", alignItems: "center", gap: 3, backgroundColor: colors.surface, borderWidth: 1, borderColor: colors.border, borderRadius: radius.pill, paddingVertical: 5, paddingHorizontal: 9 },
+  reactEmoji: { fontSize: 15 },
+  reactCount: { fontFamily: fonts.text, fontWeight: "700", color: colors.onSurfaceTertiary, fontSize: 12 },
+  commentBtn: { flexDirection: "row", alignItems: "center", gap: 4, marginLeft: "auto", backgroundColor: "#EFF4EE", borderRadius: radius.pill, paddingVertical: 6, paddingHorizontal: 10 },
+  commentBtnText: { fontFamily: fonts.text, fontWeight: "700", color: colors.brand, fontSize: 12 },
+  commentSheet: { backgroundColor: colors.surfaceSecondary, borderTopLeftRadius: radius.lg, borderTopRightRadius: radius.lg, padding: spacing.xl, gap: spacing.sm },
+  sheetTitle: { fontFamily: fonts.display, fontSize: 22, color: colors.onSurface },
+  noComments: { fontFamily: fonts.text, color: colors.muted, paddingVertical: spacing.lg, textAlign: "center" },
+  commentItem: { flexDirection: "row", gap: spacing.sm, paddingVertical: spacing.sm },
+  cAvatar: { width: 32, height: 32, borderRadius: 16, backgroundColor: colors.brandSecondary, alignItems: "center", justifyContent: "center" },
+  cAvatarText: { color: "#fff", fontFamily: fonts.text, fontWeight: "800", fontSize: 13 },
+  cName: { fontFamily: fonts.text, fontWeight: "700", color: colors.onSurface, fontSize: 13 },
+  cText: { fontFamily: fonts.text, color: colors.onSurfaceSecondary, fontSize: 14, lineHeight: 19 },
+  emojiRow: { flexDirection: "row", gap: spacing.md, paddingVertical: spacing.xs },
+  emojiInsert: { fontSize: 22 },
+  commentInputRow: { flexDirection: "row", alignItems: "flex-end", gap: spacing.sm },
+  commentInput: { flex: 1, maxHeight: 100, minHeight: 46, backgroundColor: colors.surface, borderRadius: radius.lg, borderWidth: 1, borderColor: colors.border, paddingHorizontal: spacing.lg, paddingTop: spacing.md, paddingBottom: spacing.md, fontFamily: fonts.text, fontSize: 15, color: colors.onSurface },
+  commentSend: { width: 46, height: 46, borderRadius: 23, backgroundColor: colors.brand, alignItems: "center", justifyContent: "center" },
   likeRow: { flexDirection: "row", alignItems: "center", gap: 6, alignSelf: "flex-start", paddingVertical: 4 },
   likeText: { fontFamily: fonts.text, fontWeight: "700", color: colors.onSurfaceTertiary },
   empty: { alignItems: "center", padding: spacing.xl, marginTop: spacing["3xl"], gap: spacing.sm },

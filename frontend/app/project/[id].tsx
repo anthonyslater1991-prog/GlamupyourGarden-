@@ -5,6 +5,7 @@ import {
   StyleSheet,
   Pressable,
   ScrollView,
+  TextInput,
   ActivityIndicator,
   Modal,
   Linking,
@@ -27,10 +28,14 @@ const CHANGES = [
   "Garden lighting", "Cosy seating area", "Stone pathway", "Trees & shrubs",
 ];
 const STYLES = ["Tranquil", "Modern", "Cottage", "Wildlife-friendly"];
+const GARDEN_TYPES = ["Zen", "Cottage", "Modern", "Mediterranean", "Tropical", "Family", "Wildlife"];
+const MOODS = ["Tranquil", "Relaxing", "Vibrant", "Cosy", "Minimal", "Playful"];
+const COLOUR_SCHEMES = ["Green & natural", "Blues & purples", "Warm sunset", "Whites & pastels", "Bold & bright"];
+const ORNAMENTS = ["Water feature", "Statues & ornaments", "Pergola", "Fire pit", "Raised beds", "Bird bath", "Garden lighting", "Decking"];
 
 type Hotspot = { id: string; name: string; description: string; price: string; retailer: string; url: string; x: number; y: number };
 type Design = { id: string; image_path: string; changes: string[]; style?: string; hotspots: Hotspot[]; saved: boolean };
-type Project = { id: string; title: string; original_path: string; designs: Design[] };
+type Project = { id: string; title: string; original_path: string; designs: Design[]; gallery?: { id: string; image_path: string; note?: string }[] };
 
 export default function ProjectViewer() {
   const { id } = useLocalSearchParams<{ id: string }>();
@@ -44,9 +49,47 @@ export default function ProjectViewer() {
   const [showBefore, setShowBefore] = useState(false);
   const [selChanges, setSelChanges] = useState<string[]>([]);
   const [style, setStyle] = useState(STYLES[0]);
+  const [gardenType, setGardenType] = useState<string | null>(null);
+  const [mood, setMood] = useState<string | null>(null);
+  const [colourScheme, setColourScheme] = useState<string | null>(null);
+  const [ornaments, setOrnaments] = useState<string[]>([]);
+  const [mustHaves, setMustHaves] = useState("");
+  const [wishlist, setWishlist] = useState<string[]>([]);
+  const [wishInput, setWishInput] = useState("");
   const [generating, setGenerating] = useState(false);
   const [activeHotspot, setActiveHotspot] = useState<Hotspot | null>(null);
   const [showHotspots, setShowHotspots] = useState(true);
+  const [priceSummary, setPriceSummary] = useState<any>(null);
+  const [priceInput, setPriceInput] = useState("");
+  const [addingPrice, setAddingPrice] = useState(false);
+
+  useEffect(() => {
+    if (activeHotspot) {
+      setPriceInput("");
+      setAddingPrice(false);
+      apiFetch(`/product-prices?name=${encodeURIComponent(activeHotspot.name)}`)
+        .then(setPriceSummary)
+        .catch(() => setPriceSummary(null));
+    } else {
+      setPriceSummary(null);
+    }
+  }, [activeHotspot]);
+
+  const submitPrice = async () => {
+    if (!activeHotspot || !priceInput.trim()) return;
+    try {
+      const r = await apiFetch(`/product-prices`, {
+        method: "POST",
+        body: { name: activeHotspot.name, price: priceInput.trim(), retailer: activeHotspot.retailer, url: activeHotspot.url },
+      });
+      setPriceSummary(r);
+      setPriceInput("");
+      setAddingPrice(false);
+      toast.show("Thanks! Price shared with the community 💚", "success");
+    } catch (e: any) {
+      toast.show(e.message || "Failed to add price", "error");
+    }
+  };
 
   const imgH = Math.round((width - spacing.lg * 2) * 0.85);
 
@@ -69,12 +112,33 @@ export default function ProjectViewer() {
     setSelChanges((prev) => (prev.includes(c) ? prev.filter((x) => x !== c) : [...prev, c]));
   };
 
+  const toggleOrnament = (c: string) => {
+    if (Platform.OS !== "web") Haptics.selectionAsync();
+    setOrnaments((prev) => (prev.includes(c) ? prev.filter((x) => x !== c) : [...prev, c]));
+  };
+
+  const addWish = () => {
+    const v = wishInput.trim();
+    if (!v) return;
+    setWishlist((prev) => [...prev, v]);
+    setWishInput("");
+  };
+
   const generate = async () => {
     setGenerating(true);
     try {
       const r = await apiFetch<{ design: Design }>(`/projects/${id}/redesign`, {
         method: "POST",
-        body: { changes: selChanges, style },
+        body: {
+          changes: selChanges,
+          style,
+          garden_type: gardenType,
+          mood,
+          colour_scheme: colourScheme,
+          ornaments,
+          must_haves: mustHaves,
+          wishlist,
+        },
       });
       setCurrent(r.design);
       setShowBefore(false);
@@ -133,7 +197,7 @@ export default function ProjectViewer() {
         </View>
       </View>
 
-      <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={{ paddingBottom: 40 }}>
+      <ScrollView showsVerticalScrollIndicator={false} keyboardShouldPersistTaps="handled" contentContainerStyle={{ paddingBottom: 40 }}>
         {/* Image viewer */}
         <View style={[styles.imageWrap, { height: imgH, marginHorizontal: spacing.lg }]}>
           {displayUri ? (
@@ -198,6 +262,16 @@ export default function ProjectViewer() {
 
         {/* Redesign panel */}
         <View style={styles.panel}>
+          {project.gallery && project.gallery.length > 0 && (
+            <View style={{ gap: spacing.sm }}>
+              <Text style={styles.panelLabel}>Saved inspiration 🖼️</Text>
+              <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: spacing.sm }}>
+                {project.gallery.map((g) => (
+                  <Image key={g.id} source={{ uri: fileUrl(g.image_path) }} style={styles.galleryThumb} contentFit="cover" />
+                ))}
+              </ScrollView>
+            </View>
+          )}
           <Text style={styles.panelTitle}>
             {current ? "Try another look" : "Choose your changes"}
           </Text>
@@ -235,6 +309,93 @@ export default function ProjectViewer() {
               );
             })}
           </ScrollView>
+
+          <Text style={styles.panelLabel}>Garden type</Text>
+          <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: spacing.sm }}>
+            {GARDEN_TYPES.map((s) => {
+              const active = gardenType === s;
+              return (
+                <Pressable key={s} testID={`gtype-${s}`} style={[styles.styleChip, active && styles.styleChipActive]} onPress={() => setGardenType(active ? null : s)}>
+                  <Text style={[styles.chipText, active && styles.chipTextActive]}>{s}</Text>
+                </Pressable>
+              );
+            })}
+          </ScrollView>
+
+          <Text style={styles.panelLabel}>Feel / mood</Text>
+          <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: spacing.sm }}>
+            {MOODS.map((s) => {
+              const active = mood === s;
+              return (
+                <Pressable key={s} testID={`mood-${s}`} style={[styles.styleChip, active && styles.styleChipActive]} onPress={() => setMood(active ? null : s)}>
+                  <Text style={[styles.chipText, active && styles.chipTextActive]}>{s}</Text>
+                </Pressable>
+              );
+            })}
+          </ScrollView>
+
+          <Text style={styles.panelLabel}>Colour scheme</Text>
+          <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: spacing.sm }}>
+            {COLOUR_SCHEMES.map((s) => {
+              const active = colourScheme === s;
+              return (
+                <Pressable key={s} testID={`colour-${s}`} style={[styles.styleChip, active && styles.styleChipActive]} onPress={() => setColourScheme(active ? null : s)}>
+                  <Text style={[styles.chipText, active && styles.chipTextActive]}>{s}</Text>
+                </Pressable>
+              );
+            })}
+          </ScrollView>
+
+          <Text style={styles.panelLabel}>Features & ornaments</Text>
+          <View style={styles.chipsWrap}>
+            {ORNAMENTS.map((c) => {
+              const active = ornaments.includes(c);
+              return (
+                <Pressable key={c} testID={`ornament-${c}`} style={[styles.chip, active && styles.chipActive]} onPress={() => toggleOrnament(c)}>
+                  <Text style={[styles.chipText, active && styles.chipTextActive]}>{c}</Text>
+                </Pressable>
+              );
+            })}
+          </View>
+
+          <Text style={styles.panelLabel}>Exact items or brands you want 🛍️</Text>
+          <Text style={styles.helperText}>Add specific products/brands (e.g. "Farrow & Ball Sage paint", "rattan corner sofa") — each gets a shoppable supplier link.</Text>
+          <View style={styles.wishRow}>
+            <TextInput
+              testID="wishlist-input"
+              style={styles.wishInput}
+              placeholder="Type an item or brand..."
+              placeholderTextColor={colors.muted}
+              value={wishInput}
+              onChangeText={setWishInput}
+              onSubmitEditing={addWish}
+              returnKeyType="done"
+            />
+            <Pressable testID="add-wishlist" style={styles.wishAdd} onPress={addWish}>
+              <Feather name="plus" size={20} color="#fff" />
+            </Pressable>
+          </View>
+          {wishlist.length > 0 && (
+            <View style={styles.chipsWrap}>
+              {wishlist.map((w, i) => (
+                <Pressable key={`${w}-${i}`} testID={`wish-${i}`} style={styles.wishChip} onPress={() => setWishlist((prev) => prev.filter((_, idx) => idx !== i))}>
+                  <Text style={styles.wishChipText}>{w}</Text>
+                  <Feather name="x" size={13} color={colors.brand} />
+                </Pressable>
+              ))}
+            </View>
+          )}
+
+          <Text style={styles.panelLabel}>Anything else you must have?</Text>
+          <TextInput
+            testID="must-haves-input"
+            style={styles.notesInput}
+            placeholder="e.g. keep the old oak tree, low-maintenance, kid-safe..."
+            placeholderTextColor={colors.muted}
+            value={mustHaves}
+            onChangeText={setMustHaves}
+            multiline
+          />
 
           <Pressable testID="generate-button" style={styles.generateBtn} onPress={generate} disabled={generating}>
             <Feather name="zap" size={18} color="#fff" />
@@ -278,6 +439,38 @@ export default function ProjectViewer() {
               <Feather name="external-link" size={16} color="#fff" />
               <Text style={styles.hsBtnText}>Shop at {activeHotspot?.retailer}</Text>
             </Pressable>
+
+            {priceSummary && priceSummary.count > 0 && (
+              <View style={styles.communityPrice}>
+                <Feather name="users" size={15} color={colors.brand} />
+                <Text style={styles.communityPriceText}>
+                  Community price: {priceSummary.avg_display} · from {priceSummary.count} buyer{priceSummary.count === 1 ? "" : "s"}
+                </Text>
+              </View>
+            )}
+
+            {addingPrice ? (
+              <View style={styles.priceRow}>
+                <TextInput
+                  testID="price-input"
+                  style={styles.priceInput}
+                  placeholder="What did you pay? e.g. 45"
+                  placeholderTextColor={colors.muted}
+                  keyboardType="decimal-pad"
+                  value={priceInput}
+                  onChangeText={setPriceInput}
+                />
+                <Pressable testID="submit-price" style={styles.priceSubmit} onPress={submitPrice}>
+                  <Text style={styles.priceSubmitText}>Add</Text>
+                </Pressable>
+              </View>
+            ) : (
+              <Pressable testID="add-price-button" style={styles.addPriceBtn} onPress={() => setAddingPrice(true)}>
+                <Feather name="tag" size={15} color={colors.brand} />
+                <Text style={styles.addPriceText}>I bought this — add the price you paid</Text>
+              </Pressable>
+            )}
+
             <Text style={styles.hsNote}>Affiliate links coming soon — supports the app 💚</Text>
           </View>
         </View>
@@ -306,6 +499,7 @@ const styles = StyleSheet.create({
   panel: { padding: spacing.lg, gap: spacing.md },
   panelTitle: { fontFamily: fonts.display, fontSize: 22, color: colors.onSurface },
   panelLabel: { fontFamily: fonts.text, fontWeight: "700", color: colors.onSurface, marginTop: spacing.xs },
+  galleryThumb: { width: 90, height: 90, borderRadius: radius.md, backgroundColor: colors.surfaceTertiary },
   chipsWrap: { flexDirection: "row", flexWrap: "wrap", gap: spacing.sm },
   chip: { paddingVertical: 9, paddingHorizontal: spacing.md, borderRadius: radius.pill, borderWidth: 1.5, borderColor: colors.border, backgroundColor: colors.surfaceSecondary },
   chipActive: { backgroundColor: colors.brand, borderColor: colors.brand },
@@ -313,6 +507,13 @@ const styles = StyleSheet.create({
   chipTextActive: { color: "#fff" },
   styleChip: { paddingVertical: 9, paddingHorizontal: spacing.lg, borderRadius: radius.pill, borderWidth: 1.5, borderColor: colors.border, backgroundColor: colors.surfaceSecondary },
   styleChipActive: { backgroundColor: colors.brandSecondary, borderColor: colors.brandSecondary },
+  helperText: { fontFamily: fonts.text, color: colors.muted, fontSize: 12, lineHeight: 17 },
+  wishRow: { flexDirection: "row", gap: spacing.sm, alignItems: "center" },
+  wishInput: { flex: 1, height: 48, backgroundColor: colors.surfaceSecondary, borderRadius: radius.md, borderWidth: 1, borderColor: colors.border, paddingHorizontal: spacing.lg, fontFamily: fonts.text, fontSize: 15, color: colors.onSurface },
+  wishAdd: { width: 48, height: 48, borderRadius: radius.md, backgroundColor: colors.brand, alignItems: "center", justifyContent: "center" },
+  wishChip: { flexDirection: "row", alignItems: "center", gap: 6, backgroundColor: "#EFF4EE", borderRadius: radius.pill, paddingVertical: 8, paddingHorizontal: spacing.md },
+  wishChipText: { fontFamily: fonts.text, fontWeight: "600", color: colors.brand, fontSize: 13 },
+  notesInput: { minHeight: 70, backgroundColor: colors.surfaceSecondary, borderRadius: radius.md, borderWidth: 1, borderColor: colors.border, padding: spacing.lg, fontFamily: fonts.text, fontSize: 15, color: colors.onSurface, textAlignVertical: "top" },
   generateBtn: { flexDirection: "row", alignItems: "center", justifyContent: "center", gap: spacing.sm, backgroundColor: colors.brand, height: 56, borderRadius: radius.md, marginTop: spacing.md },
   generateText: { color: "#fff", fontFamily: fonts.text, fontWeight: "700", fontSize: 16 },
   genOverlay: { flex: 1, backgroundColor: "rgba(42,54,46,0.5)", alignItems: "center", justifyContent: "center", padding: spacing.xl },
@@ -332,4 +533,12 @@ const styles = StyleSheet.create({
   hsBtn: { flexDirection: "row", alignItems: "center", justifyContent: "center", gap: spacing.sm, backgroundColor: colors.brand, height: 52, borderRadius: radius.md },
   hsBtnText: { color: "#fff", fontFamily: fonts.text, fontWeight: "700", fontSize: 15 },
   hsNote: { fontFamily: fonts.text, color: colors.muted, textAlign: "center", fontSize: 12 },
+  communityPrice: { flexDirection: "row", alignItems: "center", gap: spacing.sm, backgroundColor: "#EFF4EE", borderRadius: radius.md, padding: spacing.md },
+  communityPriceText: { fontFamily: fonts.text, fontWeight: "700", color: colors.brand, fontSize: 13, flex: 1 },
+  addPriceBtn: { flexDirection: "row", alignItems: "center", justifyContent: "center", gap: spacing.sm, borderWidth: 1.5, borderColor: colors.borderStrong, borderRadius: radius.md, paddingVertical: spacing.md },
+  addPriceText: { fontFamily: fonts.text, fontWeight: "600", color: colors.brand, fontSize: 13 },
+  priceRow: { flexDirection: "row", gap: spacing.sm, alignItems: "center" },
+  priceInput: { flex: 1, height: 48, backgroundColor: colors.surface, borderRadius: radius.md, borderWidth: 1, borderColor: colors.border, paddingHorizontal: spacing.lg, fontFamily: fonts.text, fontSize: 15, color: colors.onSurface },
+  priceSubmit: { backgroundColor: colors.brand, height: 48, paddingHorizontal: spacing.xl, borderRadius: radius.md, alignItems: "center", justifyContent: "center" },
+  priceSubmitText: { color: "#fff", fontFamily: fonts.text, fontWeight: "700" },
 });

@@ -1,5 +1,5 @@
 import React from "react";
-import { Modal, StyleSheet, Pressable, View, Dimensions } from "react-native";
+import { Modal, StyleSheet, Pressable, View, Text, Dimensions } from "react-native";
 import { Image } from "expo-image";
 import { Feather } from "@expo/vector-icons";
 import { GestureDetector, Gesture } from "react-native-gesture-handler";
@@ -8,7 +8,7 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 const { width, height } = Dimensions.get("window");
 
-export default function ImageViewer({ uri, visible, onClose }: { uri?: string; visible: boolean; onClose: () => void }) {
+export default function ImageViewer({ uri, visible, onClose, onSave }: { uri?: string; visible: boolean; onClose: () => void; onSave?: () => void }) {
   const insets = useSafeAreaInsets();
   const scale = useSharedValue(1);
   const savedScale = useSharedValue(1);
@@ -92,8 +92,13 @@ export default function ImageViewer({ uri, visible, onClose }: { uri?: string; v
             {uri && <Image source={{ uri }} style={styles.img} contentFit="contain" />}
           </Animated.View>
         </GestureDetector>
-        <View pointerEvents="none" style={[styles.hint, { bottom: insets.bottom + 20 }]}>
-          <Feather name="maximize" size={14} color="rgba(255,255,255,0.7)" />
+        <View pointerEvents="box-none" style={[styles.hint, { bottom: insets.bottom + 20 }]}>
+          {onSave && (
+            <Pressable testID="save-photo-to-project" style={styles.saveBtn} onPress={onSave}>
+              <Feather name="bookmark" size={16} color="#fff" />
+              <Text style={styles.saveText}>Save to project</Text>
+            </Pressable>
+          )}
         </View>
       </View>
     </Modal>
@@ -105,5 +110,7 @@ const styles = StyleSheet.create({
   close: { position: "absolute", right: 16, zIndex: 10, width: 44, height: 44, borderRadius: 22, backgroundColor: "rgba(255,255,255,0.15)", alignItems: "center", justifyContent: "center" },
   imgWrap: { width, height: height * 0.8, alignItems: "center", justifyContent: "center" },
   img: { width, height: height * 0.8 },
-  hint: { position: "absolute", alignSelf: "center", opacity: 0.6 },
+  hint: { position: "absolute", alignSelf: "center", alignItems: "center" },
+  saveBtn: { flexDirection: "row", alignItems: "center", gap: 8, backgroundColor: "rgba(74,124,89,0.95)", paddingVertical: 12, paddingHorizontal: 20, borderRadius: 999 },
+  saveText: { color: "#fff", fontFamily: "Nunito", fontWeight: "700", fontSize: 15 },
 });

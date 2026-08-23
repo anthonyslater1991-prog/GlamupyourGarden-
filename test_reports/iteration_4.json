@@ -1,0 +1,46 @@
+{
+  "summary": "V5 features (personalised redesign, wall react/comment, save chat photos, coverage map, DM read receipts) validated end-to-end. Backend: 8/8 new pytest cases PASSED in /app/backend/tests/test_v5_features.py — wall 🌿×2 + ❤️ reactions increment and persist in GET /api/wall; empty emoji -> 400; comment append with 🌿 emoji, visible via GET; empty comment -> 400; DM read flag flips to true only after recipient GETs /api/messages/{sender_id} (Cara opens -> test_user sees read=true); /api/projects/{id}/gallery add persists in GET /api/projects/{id}; /api/map/contractors returns coverage_miles + reachable + distance_km (Manchester nearest ~0.7km & reachable); POST /api/projects/{id}/redesign with full payload (changes, style, garden_type=small urban patio, mood=calm, colour_scheme=greens and cream, ornaments[], must_haves, wishlist=[Ego mower, Weber Q1200 BBQ]) returns wishlist items as FIRST two hotspots with retailer='B&Q' and diy.com URL, remaining are AI-generated products; filters persisted on design doc. Frontend (390x844 mobile viewport): Community wall shows the 5-emoji reaction bar (❤️🌿😍👏🐝) with tappable counts (heart 0→1 after tap); comments modal opens on tap, shows author + text list, emoji quick-insert row (❤️🌿😍👏🐝) prepends to input, posted comment 'lovely v5!' appears in list. /map screen rendered correctly with SVG 'Who reaches you 🎯' (red You dot centre, green ring for reachable Blossom & Bee ~0.7km, grey rings for out-of-range) + 'Sorted by distance' list with km badges (0.7, 56.8, 113.7, 261.9 km) + graceful 'Map preview unavailable' fallback for the external static-map panel (expected — sandbox blocks the host). DM thread with Cara Clover shows 'Seen' tick under my sent messages (including the just-sent TEST_ v5 read message from pytest) — read receipts working live. Critical bug FIXED during test: /app/frontend/src/components/ImageViewer.tsx was using <Text> for the 'Save to project' label but NOT importing Text from react-native — added Text to the react-native import (single-line change). Deprecated packages detected: none new. Non-blocking react-native-web warnings persist from v2/v3: 'shadow*' style props (use boxShadow) and props.pointerEvents (use style.pointerEvents).",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {
+    "ui_bugs": [
+      {"component": "ImageViewer.tsx", "issue": "FIXED by testing agent: <Text> used for 'Save to project' button label but Text was not imported from react-native (would crash the modal when onSave present). Added Text to the react-native import.", "testID": "save-photo-to-project", "priority": "CRITICAL-fixed"},
+      {"component": "project/[id].tsx redesign panel", "issue": "On initial load of a project detail screen, the new personalisation fields (gtype-*, mood-*, colour-*, ornament-*, wishlist-input, add-wishlist, must-haves-input, generate-button) were not detected in the DOM — likely they live below the fold and require scroll, or the redesign panel opens on a toggle. Main agent should confirm the panel is visible/expanded by default and that scrolling to it works on mobile. Backend confirms the fields are wired end-to-end.", "testID": "wishlist-input", "priority": "MEDIUM"}
+    ],
+    "integration_issues": [],
+    "design_issues": [
+      {"screen": "global", "issues": ["Carried over from v2/v3: react-native-web deprecation warnings for 'shadow*' style props and 'props.pointerEvents'. Non-blocking."]},
+      {"screen": "/map", "issues": ["Static OpenStreetMap host still unreachable from preview sandbox (ERR_NAME_NOT_RESOLVED); graceful 'Map preview unavailable — distances shown below' fallback works and the new SVG CoverageMap renders correctly, so not a defect."]}
+    ],
+    "react_native_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_v5_features.py",
+    "/app/backend/tests/test_v4_features.py",
+    "/app/backend/tests/test_v3_features.py",
+    "/app/backend/tests/test_v2_features.py",
+    "/app/backend/tests/test_backend.py",
+    "/app/test_reports/pytest/v5_results.xml"
+  ],
+  "action_items": [
+    "Confirm the project-redesign panel (Garden type / Mood / Colour scheme / Ornaments / Wishlist input+add / Must-haves / Generate button) is actually rendered and reachable via scroll on the project detail screen (fields not detected on initial load in Playwright DOM query — likely below the fold; verify by scrolling the project screen).",
+    "Optional polish: (1) suppress shadow*/pointerEvents deprecation warnings by migrating to boxShadow and style.pointerEvents; (2) server.py is now 1450 lines — long past the 700-line threshold, please split into routers (auth, projects, messaging, admin, maps, community, ai); (3) MessageCreate/RoomMessageCreate/CommentInput text still unbounded — recommend a 2000 char cap; (4) /api/wall/{id}/react does not de-duplicate per user — every tap increments (matches spec 'counts' but consider per-user toggle for like semantics later)."
+  ],
+  "critical_code_review_comments": [
+    "server.py now 1450 lines — high priority to refactor into routers for maintainability.",
+    "In-process _geo_cache never expires and isn't shared across replicas — move to Mongo/Redis at scale.",
+    "wall react endpoint uses $inc without per-user tracking — a bot could spam the counter; consider a per-user reactions map.",
+    "ImageViewer.tsx missing Text import was a P0 crash risk that only surfaced when onSave prop was present — worth adding an ESLint rule for react-native-imports and a smoke test on the modal.",
+    "Redesign hotspot generator picks a RANDOM retailer per AI product (RETAILERS[random.choice]) — the request spec says wishlist items are B&Q (correct) but AI products get any retailer; UI copy 'Shop at B&Q' assumes B&Q but the retailer varies. Confirm the CTA reads the actual hotspot.retailer.",
+    "Report model still accepts any reason string; consider fixed enum."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_v5_features.py (created)",
+    "/app/frontend/src/components/ImageViewer.tsx (added Text to react-native import — critical fix)"
+  ],
+  "success_rate": {"backend": "100% (8/8 v5 + 12/12 v4 + 16/16 v3 + 15/15 v2 + 24/24 v1)", "frontend": "5/6 flows verified (community reactions ✅, comments modal + emoji-insert + post ✅, coverage-map SVG + distance list ✅, DM Seen receipts ✅, Pros→Map button navigation ✅; redesign-panel field visibility ⚠️ needs confirmation via scroll)"},
+  "seed_data_creation": "Created 5 TEST_ wall posts (empty-cmt, cmt, wall, wall, empty cmt) with reactions and a comment 'lovely v5!' on one. Sent a TEST_ v5 read DM from garden_test to cara (now marked Seen). All prefixed 'TEST_' for future cleanup.",
+  "retest_needed": false,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "Test creds in /app/memory/test_credentials.md. Run all backend tests: cd /app/backend && pytest tests/ -v. Preview sandbox cannot reach staticmap.openstreetmap.de so the /map external map image will always fall back to the graceful panel — that is expected. The NEW CoverageMap SVG in /app/frontend/src/components/CoverageMap.tsx renders locally with no network dependency and works fine. On /project/[id] scroll DOWN to see the redesign panel fields (garden type / mood / colour / ornaments / wishlist / must-haves / Generate). Wishlist items ALWAYS become the first hotspots with retailer 'B&Q' (diy.com search URL).",
+  "rca_of_issue": "Bug found & fixed during test: ImageViewer.tsx rendered <Text> without importing it from react-native. Reproduction: opening a chat/DM photo bubble (dm-image-*) with an onSave handler would mount the Modal and try to render <Text style={styles.saveText}>Save to project</Text>, throwing 'Text is not defined' and rendering a red screen on native / undefined component on web. Mitigation: added Text to the react-native import in /app/frontend/src/components/ImageViewer.tsx line 2. Verified the file compiles after supervisor restart (no metro errors)."
+}

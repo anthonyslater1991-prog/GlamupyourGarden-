@@ -5,6 +5,7 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { Feather } from "@expo/vector-icons";
 import { useRouter, useFocusEffect } from "expo-router";
 import { apiFetch } from "@/src/lib/api";
+import CoverageMap from "@/src/components/CoverageMap";
 import { colors, spacing, radius, fonts } from "@/src/theme";
 
 type Contractor = { id: string; name: string; tagline: string; postcode?: string; distance_km: number | null; lat?: number; image: string };
@@ -66,6 +67,14 @@ export default function MapScreen() {
             <View style={styles.legendItem}><View style={[styles.dot, { backgroundColor: colors.error }]} /><Text style={styles.legendText}>You</Text></View>
             <View style={styles.legendItem}><View style={[styles.dot, { backgroundColor: colors.success }]} /><Text style={styles.legendText}>Contractors</Text></View>
           </View>
+
+          {/* Coverage radius map */}
+          {data.me && (
+            <>
+              <Text style={styles.sectionTitle}>Who reaches you 🎯</Text>
+              <CoverageMap me={data.me} contractors={data.contractors as any} />
+            </>
+          )}
 
           {!data.me && (
             <Pressable testID="add-postcode-hint" style={styles.hintCard} onPress={() => router.push("/(tabs)/profile")}>

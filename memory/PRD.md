@@ -50,6 +50,15 @@ Garden makeover app: users photograph their garden, choose changes, and generate
 - Report Actions: admin Warn / Suspend / Clear on reports; suspended members blocked from login + sessions revoked
 - Verified: 12/12 backend tests + frontend flows passed (iteration 4)
 
+## Implemented (2026-08-23) — iteration 5
+- Read Receipts in DMs (Sent → Seen)
+- Save Shared Photos: tap chat photo → full-screen zoom viewer → save to an existing project's gallery or a new project
+- Coverage Map Ring: SVG map on /map drawing each contractor's travel radius (green = reaches you) + distance list
+- Wall likes + comments with emojis (reaction bar ❤️🌿😍👏🐝 + comments modal with emoji quick-insert)
+- Highly personalised AI redesign: garden type, mood, colour scheme, ornaments, must-haves note, and a "exact items/brands you want" wishlist (each becomes a shoppable B&Q supplier pin)
+- Crowdsourced product prices: buyers add the price they paid (no scraping); shown as community avg to the next person
+- Verified: backend curl + frontend lint/e2e (iteration 5)
+
 ## Backlog
 ### P1
 - Real member-to-member messaging + community chat room (opt-out aware)

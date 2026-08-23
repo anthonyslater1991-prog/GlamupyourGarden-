@@ -134,6 +134,12 @@ class RedesignInput(BaseModel):
     changes: List[str] = []
     style: Optional[str] = None
     notes: Optional[str] = None
+    garden_type: Optional[str] = None
+    mood: Optional[str] = None
+    colour_scheme: Optional[str] = None
+    ornaments: List[str] = []
+    must_haves: Optional[str] = None
+    wishlist: List[str] = []
 
 
 class WallPostCreate(BaseModel):
@@ -357,11 +363,12 @@ HOTSPOT_POSITIONS = [
 ]
 
 
-async def generate_hotspots(changes: List[str], style: Optional[str]) -> List[dict]:
+async def generate_hotspots(changes: List[str], style: Optional[str], colour_scheme: Optional[str] = None, wishlist: Optional[List[str]] = None) -> List[dict]:
     change_text = ", ".join(changes) if changes else "general garden improvements"
+    colour_txt = f" Colour scheme: {colour_scheme}." if colour_scheme else ""
     prompt = (
         f"A homeowner redesigned their garden with these changes: {change_text}. "
-        f"Style: {style or 'natural'}. Suggest 4 realistic shoppable products they would buy to achieve this look. "
+        f"Style: {style or 'natural'}.{colour_txt} Suggest 4 realistic shoppable products they would buy to achieve this look. "
         "Return ONLY a JSON array. Each item: {\"name\": short product name, \"description\": one short sentence, "
         "\"price\": realistic GBP price like \"£49\", \"search_query\": simple search keywords}. No markdown."
     )
@@ -387,10 +394,29 @@ async def generate_hotspots(changes: List[str], style: Optional[str]) -> List[di
         ]
 
     hotspots = []
-    for i, p in enumerate(products[:len(HOTSPOT_POSITIONS)]):
+    # The customer's own specified items/brands become dedicated shoppable pins.
+    # For now these link to a default supplier (B&Q); later these become affiliate links.
+    for item in (wishlist or []):
+        if len(hotspots) >= len(HOTSPOT_POSITIONS):
+            break
+        q = f"{item}".replace(" ", "+")
+        pos = HOTSPOT_POSITIONS[len(hotspots)]
+        hotspots.append({
+            "id": new_id("hot"),
+            "name": item,
+            "description": "Your requested item — tap to shop at the supplier.",
+            "price": "",
+            "retailer": "B&Q",
+            "url": f"https://www.diy.com/search?term={q}",
+            "x": pos["x"],
+            "y": pos["y"],
+        })
+
+    start = len(hotspots)
+    for i, p in enumerate(products[: len(HOTSPOT_POSITIONS) - start]):
         retailer, base_url = random.choice(RETAILERS)
         query = (p.get("search_query") or p.get("name") or "garden").replace(" ", "+")
-        pos = HOTSPOT_POSITIONS[i]
+        pos = HOTSPOT_POSITIONS[start + i]
         hotspots.append({
             "id": new_id("hot"),
             "name": p.get("name", "Product"),
@@ -417,10 +443,25 @@ async def redesign(project_id: str, body: RedesignInput, user: dict = Depends(ge
 
     change_text = ", ".join(body.changes) if body.changes else "make it more beautiful and tidy"
     style = body.style or "lush and tranquil"
-    notes = f" Additional notes: {body.notes}." if body.notes else ""
+    details = []
+    if body.garden_type:
+        details.append(f"Garden type: {body.garden_type}")
+    if body.mood:
+        details.append(f"Mood/feel: {body.mood}")
+    if body.colour_scheme:
+        details.append(f"Colour scheme: {body.colour_scheme}")
+    if body.ornaments:
+        details.append(f"Include these features/ornaments: {', '.join(body.ornaments)}")
+    if body.wishlist:
+        details.append(f"The customer specifically wants these exact items/brands: {', '.join(body.wishlist)}")
+    if body.must_haves:
+        details.append(f"Must include: {body.must_haves}")
+    if body.notes:
+        details.append(f"Extra notes: {body.notes}")
+    detail_text = (" " + ". ".join(details) + ".") if details else ""
     prompt = (
         f"Redesign and beautify this real garden photo. Keep the same camera angle, perspective and overall layout, "
-        f"but transform it into a stunning, professionally landscaped {style} garden. Apply these improvements: {change_text}.{notes} "
+        f"but transform it into a stunning, professionally landscaped {style} garden. Apply these improvements: {change_text}.{detail_text} "
         "Make it photorealistic with natural lighting, realistic colours, healthy plants, and clean finishes. "
         "The result should look like a real 'after' photo of a garden makeover."
     )
@@ -444,13 +485,18 @@ async def redesign(project_id: str, body: RedesignInput, user: dict = Depends(ge
     await run_in_threadpool(put_object, out_path, out_bytes, "image/png")
     await db.uploads.insert_one({"path": out_path, "owner_id": user["user_id"], "content_type": "image/png", "created_at": now_iso()})
 
-    hotspots = await generate_hotspots(body.changes, body.style)
+    hotspots = await generate_hotspots(body.changes + body.ornaments, body.style, body.colour_scheme, body.wishlist)
 
     design = {
         "id": new_id("design"),
         "image_path": out_path,
         "changes": body.changes,
         "style": body.style,
+        "garden_type": body.garden_type,
+        "mood": body.mood,
+        "colour_scheme": body.colour_scheme,
+        "ornaments": body.ornaments,
+        "wishlist": body.wishlist,
         "hotspots": hotspots,
         "saved": False,
         "created_at": now_iso(),
@@ -507,6 +553,77 @@ async def save_design(project_id: str, design_id: str, user: dict = Depends(get_
     return {"ok": True}
 
 
+class GalleryAdd(BaseModel):
+    image_path: str
+    note: Optional[str] = None
+
+
+@api_router.post("/projects/{project_id}/gallery")
+async def add_to_gallery(project_id: str, body: GalleryAdd, user: dict = Depends(get_current_user)):
+    project = await db.projects.find_one({"id": project_id, "owner_id": user["user_id"]}, {"_id": 0})
+    if not project:
+        raise HTTPException(status_code=404, detail="Project not found")
+    item = {"id": new_id("gal"), "image_path": body.image_path, "note": body.note or "", "created_at": now_iso()}
+    await db.projects.update_one({"id": project_id}, {"$push": {"gallery": item}, "$set": {"updated_at": now_iso()}})
+    return {"item": item}
+
+
+class PriceInput(BaseModel):
+    name: str
+    price: str
+    retailer: Optional[str] = None
+    url: Optional[str] = None
+
+
+def _name_key(name: str) -> str:
+    return re.sub(r"[^a-z0-9 ]", "", (name or "").lower()).strip()
+
+
+def _parse_amount(price: str):
+    m = re.search(r"[\d]+(?:\.[\d]{1,2})?", (price or "").replace(",", ""))
+    return float(m.group(0)) if m else None
+
+
+@api_router.post("/product-prices")
+async def add_price(body: PriceInput, user: dict = Depends(get_current_user)):
+    amount = _parse_amount(body.price)
+    if amount is None:
+        raise HTTPException(status_code=400, detail="Enter a valid price")
+    entry = {
+        "id": new_id("price"),
+        "name": body.name.strip(),
+        "name_key": _name_key(body.name),
+        "amount": amount,
+        "display": f"£{amount:.2f}".rstrip("0").rstrip(".") if amount == int(amount) else f"£{amount:.2f}",
+        "retailer": body.retailer or "",
+        "url": body.url or "",
+        "user_id": user["user_id"],
+        "user_name": user.get("name") or "A gardener",
+        "created_at": now_iso(),
+    }
+    await db.product_prices.insert_one(entry)
+    return await _price_summary(body.name)
+
+
+async def _price_summary(name: str):
+    key = _name_key(name)
+    docs = await db.product_prices.find({"name_key": key}, {"_id": 0}).sort("created_at", -1).to_list(200)
+    amounts = [d["amount"] for d in docs if d.get("amount") is not None]
+    avg = round(sum(amounts) / len(amounts), 2) if amounts else None
+    return {
+        "name": name,
+        "count": len(docs),
+        "avg": avg,
+        "avg_display": (f"£{avg:.2f}".rstrip("0").rstrip(".") if avg is not None and avg == int(avg) else (f"£{avg:.2f}" if avg is not None else None)),
+        "latest": docs[:5],
+    }
+
+
+@api_router.get("/product-prices")
+async def get_prices(name: str = Query(...), user: dict = Depends(get_current_user)):
+    return await _price_summary(name)
+
+
 # ---------------------------------------------------------------------------
 # Community wall
 # ---------------------------------------------------------------------------
@@ -526,6 +643,8 @@ async def create_wall_post(body: WallPostCreate, user: dict = Depends(get_curren
         "caption": body.caption,
         "image_path": body.image_path,
         "likes": 0,
+        "reactions": {},
+        "comments": [],
         "created_at": now_iso(),
     }
     await db.wall_posts.insert_one(post)
@@ -538,6 +657,46 @@ async def like_post(post_id: str, user: dict = Depends(get_current_user)):
     await db.wall_posts.update_one({"id": post_id}, {"$inc": {"likes": 1}})
     doc = await db.wall_posts.find_one({"id": post_id}, {"_id": 0})
     return {"post": doc}
+
+
+class ReactInput(BaseModel):
+    emoji: str
+
+
+class CommentInput(BaseModel):
+    text: str
+
+
+@api_router.post("/wall/{post_id}/react")
+async def react_post(post_id: str, body: ReactInput, user: dict = Depends(get_current_user)):
+    emoji = (body.emoji or "").strip()[:8]
+    if not emoji:
+        raise HTTPException(status_code=400, detail="No emoji")
+    await db.wall_posts.update_one({"id": post_id}, {"$inc": {f"reactions.{emoji}": 1}})
+    doc = await db.wall_posts.find_one({"id": post_id}, {"_id": 0})
+    if not doc:
+        raise HTTPException(status_code=404, detail="Not found")
+    return {"post": doc}
+
+
+@api_router.post("/wall/{post_id}/comment")
+async def comment_post(post_id: str, body: CommentInput, user: dict = Depends(get_current_user)):
+    if not body.text.strip():
+        raise HTTPException(status_code=400, detail="Empty comment")
+    post = await db.wall_posts.find_one({"id": post_id})
+    if not post:
+        raise HTTPException(status_code=404, detail="Not found")
+    comment = {
+        "id": new_id("cmt"),
+        "author_id": user["user_id"],
+        "author_name": user.get("name") or "Gardener",
+        "author_picture": user.get("picture"),
+        "text": body.text.strip(),
+        "created_at": now_iso(),
+    }
+    await db.wall_posts.update_one({"id": post_id}, {"$push": {"comments": comment}})
+    doc = await db.wall_posts.find_one({"id": post_id}, {"_id": 0})
+    return {"post": doc, "comment": comment}
 
 
 # ---------------------------------------------------------------------------
