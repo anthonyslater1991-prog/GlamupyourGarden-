@@ -11,6 +11,7 @@ import base64
 import logging
 import uuid
 import random
+import io
 from pathlib import Path
 from datetime import datetime, timezone, timedelta
 from typing import List, Optional
@@ -21,6 +22,7 @@ import requests
 from pydantic import BaseModel, Field, EmailStr
 
 from emergentintegrations.llm.chat import LlmChat, UserMessage, ImageContent
+from emergentintegrations.payments.stripe.checkout import StripeCheckout, CheckoutSessionRequest
 
 ROOT_DIR = Path(__file__).parent
 load_dotenv(ROOT_DIR / '.env')
@@ -36,6 +38,20 @@ client = AsyncIOMotorClient(mongo_url)
 db = client[os.environ['DB_NAME']]
 
 EMERGENT_KEY = os.environ.get("EMERGENT_LLM_KEY")
+STRIPE_API_KEY = os.environ.get("STRIPE_API_KEY", "")
+# A REAL Stripe test secret (sk_test_.../rk_test_...) enables Stripe Connect payouts.
+# The built-in proxy key (sk_test_emergent) only supports Checkout, not Connect.
+STRIPE_CONNECT_SECRET_KEY = os.environ.get("STRIPE_CONNECT_SECRET_KEY", "")
+
+
+def _real_stripe() -> bool:
+    k = STRIPE_CONNECT_SECRET_KEY
+    return k.startswith("sk_") or k.startswith("rk_")
+
+
+if _real_stripe():
+    import stripe as _stripe_sdk
+    _stripe_sdk.api_key = STRIPE_CONNECT_SECRET_KEY
 IMAGE_MODEL = "gemini-3.1-flash-image-preview"
 TEXT_MODEL = "gpt-5.4-mini"
 
@@ -151,6 +167,7 @@ class ReviewCreate(BaseModel):
     rating: int
     text: str
     image_paths: List[str] = []
+    contract_id: Optional[str] = None
 
 
 class VoteInput(BaseModel):
@@ -210,6 +227,54 @@ class ContractSign(BaseModel):
 class StageUpdate(BaseModel):
     stage_index: int
     note: Optional[str] = None
+
+
+class ClaimAction(BaseModel):
+    action: str  # approve | reject
+
+
+class ContractorProfileUpdate(BaseModel):
+    tagline: Optional[str] = None
+    phone: Optional[str] = None
+    location: Optional[str] = None
+    postcode: Optional[str] = None
+    services: Optional[List[str]] = None
+    coverage_miles: Optional[int] = None
+
+
+class ReviewReply(BaseModel):
+    text: str
+
+
+class DepositRequest(BaseModel):
+    origin: str
+
+
+class QuoteItem(BaseModel):
+    label: str
+    amount: float
+
+
+class QuoteSubmit(BaseModel):
+    amount: Optional[float] = None
+    items: List[QuoteItem] = []
+    note: Optional[str] = None
+
+
+class QuoteRespond(BaseModel):
+    accept: bool
+
+
+class ConnectOnboard(BaseModel):
+    origin: str
+
+
+class ReleaseInput(BaseModel):
+    fee_percent: Optional[float] = None
+
+
+class SettingsInput(BaseModel):
+    platform_fee_percent: float
 
 
 # ---------------------------------------------------------------------------
@@ -826,6 +891,17 @@ async def add_review(contractor_id: str, body: ReviewCreate, user: dict = Depend
     avg = round(sum(r["rating"] for r in reviews) / len(reviews), 1)
     await db.contractors.update_one({"id": contractor_id}, {"$set": {"rating": avg, "review_count": len(reviews)}})
     review.pop("_id", None)
+    # If this review came from a completed-job reminder, mark that contract reviewed
+    if body.contract_id:
+        await db.contracts.update_one(
+            {"id": body.contract_id, "customer_id": user["user_id"]},
+            {"$set": {"reviewed": True}},
+        )
+    else:
+        await db.contracts.update_many(
+            {"contractor_id": contractor_id, "customer_id": user["user_id"], "status": "completed"},
+            {"$set": {"reviewed": True}},
+        )
     return {"review": review, "rating": avg, "review_count": len(reviews)}
 
 
@@ -837,6 +913,111 @@ async def set_coverage(contractor_id: str, body: CoverageInput, user: dict = Dep
     res = await db.contractors.update_one({"id": contractor_id}, {"$set": {"coverage_miles": miles}})
     if res.matched_count == 0:
         raise HTTPException(status_code=404, detail="Not found")
+    doc = await db.contractors.find_one({"id": contractor_id}, {"_id": 0})
+    return {"contractor": doc}
+
+
+# ---------------------------------------------------------------------------
+# Contractor accounts: claim listing (admin-approved), manage profile, reply to reviews
+# ---------------------------------------------------------------------------
+async def owned_contractor_ids(user: dict) -> List[str]:
+    if user.get("role") != "contractor":
+        return []
+    docs = await db.contractors.find({"claimed_by": user["user_id"], "claim_status": "approved"}, {"id": 1, "_id": 0}).to_list(50)
+    return [d["id"] for d in docs]
+
+
+async def can_manage_contractor(user: dict, contractor_id: str) -> bool:
+    if user.get("role") == "admin":
+        return True
+    c = await db.contractors.find_one({"id": contractor_id}, {"_id": 0})
+    return bool(c and c.get("claim_status") == "approved" and c.get("claimed_by") == user["user_id"])
+
+
+@api_router.post("/contractors/{contractor_id}/claim")
+async def claim_contractor(contractor_id: str, user: dict = Depends(get_current_user)):
+    if user.get("role") != "contractor":
+        raise HTTPException(status_code=403, detail="Only contractor accounts can claim a listing")
+    c = await db.contractors.find_one({"id": contractor_id})
+    if not c:
+        raise HTTPException(status_code=404, detail="Listing not found")
+    if c.get("claim_status") == "approved":
+        if c.get("claimed_by") == user["user_id"]:
+            return {"ok": True, "claim_status": "approved"}
+        raise HTTPException(status_code=400, detail="This listing is already claimed by another contractor")
+    # only one active claim per contractor at a time
+    await db.contractors.update_one({"id": contractor_id}, {"$set": {
+        "claim_status": "pending",
+        "claim_user_id": user["user_id"],
+        "claim_user_name": user.get("name"),
+        "claim_requested_at": now_iso(),
+    }})
+    return {"ok": True, "claim_status": "pending"}
+
+
+@api_router.get("/my-contractor")
+async def my_contractor(user: dict = Depends(get_current_user)):
+    if user.get("role") != "contractor":
+        return {"contractor": None, "pending": None}
+    approved = await db.contractors.find_one({"claimed_by": user["user_id"], "claim_status": "approved"}, {"_id": 0})
+    pending = await db.contractors.find_one({"claim_user_id": user["user_id"], "claim_status": "pending"}, {"_id": 0})
+    return {"contractor": approved, "pending": pending}
+
+
+@api_router.put("/contractors/{contractor_id}/profile")
+async def update_contractor_profile(contractor_id: str, body: ContractorProfileUpdate, user: dict = Depends(get_current_user)):
+    if not await can_manage_contractor(user, contractor_id):
+        raise HTTPException(status_code=403, detail="You don't manage this listing")
+    updates = {k: v for k, v in body.model_dump().items() if v is not None}
+    if "coverage_miles" in updates:
+        updates["coverage_miles"] = max(1, min(500, int(updates["coverage_miles"])))
+    if updates:
+        await db.contractors.update_one({"id": contractor_id}, {"$set": updates})
+    doc = await db.contractors.find_one({"id": contractor_id}, {"_id": 0})
+    return {"contractor": doc}
+
+
+@api_router.post("/contractors/{contractor_id}/reviews/{review_id}/reply")
+async def reply_to_review(contractor_id: str, review_id: str, body: ReviewReply, user: dict = Depends(get_current_user)):
+    if not await can_manage_contractor(user, contractor_id):
+        raise HTTPException(status_code=403, detail="You don't manage this listing")
+    if not body.text.strip():
+        raise HTTPException(status_code=400, detail="Reply is empty")
+    res = await db.reviews.update_one(
+        {"id": review_id, "contractor_id": contractor_id},
+        {"$set": {"reply": body.text.strip(), "reply_at": now_iso()}},
+    )
+    if res.matched_count == 0:
+        raise HTTPException(status_code=404, detail="Review not found")
+    review = await db.reviews.find_one({"id": review_id}, {"_id": 0})
+    return {"review": review}
+
+
+@api_router.get("/admin/claims")
+async def list_claims(user: dict = Depends(get_current_user)):
+    if user.get("role") != "admin":
+        raise HTTPException(status_code=403, detail="Admins only")
+    docs = await db.contractors.find({"claim_status": "pending"}, {"_id": 0}).to_list(100)
+    return {"claims": docs}
+
+
+@api_router.post("/admin/claims/{contractor_id}/action")
+async def act_on_claim(contractor_id: str, body: ClaimAction, user: dict = Depends(get_current_user)):
+    if user.get("role") != "admin":
+        raise HTTPException(status_code=403, detail="Admins only")
+    c = await db.contractors.find_one({"id": contractor_id})
+    if not c or c.get("claim_status") != "pending":
+        raise HTTPException(status_code=404, detail="No pending claim for this listing")
+    if body.action == "approve":
+        await db.contractors.update_one({"id": contractor_id}, {"$set": {
+            "claim_status": "approved",
+            "claimed_by": c.get("claim_user_id"),
+            "claim_approved_at": now_iso(),
+        }})
+    elif body.action == "reject":
+        await db.contractors.update_one({"id": contractor_id}, {"$set": {"claim_status": "unclaimed"}, "$unset": {"claim_user_id": "", "claim_user_name": ""}})
+    else:
+        raise HTTPException(status_code=400, detail="action must be approve or reject")
     doc = await db.contractors.find_one({"id": contractor_id}, {"_id": 0})
     return {"contractor": doc}
 
@@ -877,8 +1058,9 @@ async def _contract_or_404(contract_id: str, user: dict) -> dict:
     if not c:
         raise HTTPException(status_code=404, detail="Contract not found")
     is_customer = c.get("customer_id") == user["user_id"]
-    is_pro = user.get("role") in ("contractor", "admin")
-    if not (is_customer or is_pro):
+    is_admin = user.get("role") == "admin"
+    is_owner_pro = user.get("role") == "contractor" and c.get("contractor_id") in await owned_contractor_ids(user)
+    if not (is_customer or is_admin or is_owner_pro):
         raise HTTPException(status_code=403, detail="You cannot access this contract")
     return c
 
@@ -927,6 +1109,19 @@ async def create_contract(body: ContractCreate, user: dict = Depends(get_current
         "warranty": body.warranty or "12 months workmanship guarantee.",
         "site_address": body.site_address or user.get("address") or user.get("postcode") or "",
         "notes": body.notes or "",
+        # deposit + review tracking
+        "deposit_paid": False,
+        "deposit_amount": None,
+        "deposit_session_id": None,
+        "reviewed": False,
+        "review_dismissed": False,
+        # quote
+        "quote_status": "none",  # none | proposed | accepted | declined
+        "quote_amount": None,
+        "quote_items": [],
+        "quote_note": "",
+        "quote_proposed_at": None,
+        "quote_decided_at": None,
         # signatures
         "customer_signed": False,
         "customer_signature": None,
@@ -947,8 +1142,10 @@ async def create_contract(body: ContractCreate, user: dict = Depends(get_current
 
 @api_router.get("/contracts")
 async def list_contracts(user: dict = Depends(get_current_user)):
-    if user.get("role") in ("contractor", "admin"):
+    if user.get("role") == "admin":
         q = {}
+    elif user.get("role") == "contractor":
+        q = {"contractor_id": {"$in": await owned_contractor_ids(user)}}
     else:
         q = {"customer_id": user["user_id"]}
     docs = await db.contracts.find(q, {"_id": 0, "messages": 0}).sort("updated_at", -1).to_list(200)
@@ -1058,6 +1255,442 @@ async def update_stage(contract_id: str, body: StageUpdate, user: dict = Depends
     )
     fresh = await db.contracts.find_one({"id": contract_id})
     return {"contract": public_contract(fresh)}
+
+
+async def _resolve_user_from_token(token: Optional[str]) -> dict:
+    user = await resolve_user(token)
+    if not user:
+        raise HTTPException(status_code=401, detail="Not authenticated")
+    return user
+
+
+@api_router.get("/contracts/{contract_id}/pdf")
+async def contract_pdf(contract_id: str, token: Optional[str] = Query(None), authorization: Optional[str] = Header(None)):
+    tok = token
+    if not tok and authorization and authorization.startswith("Bearer "):
+        tok = authorization[7:]
+    user = await _resolve_user_from_token(tok)
+    c = await _contract_or_404(contract_id, user)
+
+    from reportlab.lib.pagesizes import A4
+    from reportlab.lib.units import mm
+    from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+    from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle
+    from reportlab.lib import colors as rlcolors
+
+    buf = io.BytesIO()
+    doc = SimpleDocTemplate(buf, pagesize=A4, topMargin=20 * mm, bottomMargin=18 * mm, leftMargin=18 * mm, rightMargin=18 * mm)
+    styles = getSampleStyleSheet()
+    h1 = ParagraphStyle("h1", parent=styles["Title"], fontSize=20, textColor=rlcolors.HexColor("#2C352E"))
+    h2 = ParagraphStyle("h2", parent=styles["Heading2"], fontSize=12, textColor=rlcolors.HexColor("#4A7C59"), spaceBefore=10)
+    body = ParagraphStyle("body", parent=styles["Normal"], fontSize=10, leading=15, textColor=rlcolors.HexColor("#2C352E"))
+    small = ParagraphStyle("small", parent=styles["Normal"], fontSize=8, textColor=rlcolors.HexColor("#7A857C"))
+
+    story = []
+    story.append(Paragraph("Glam up your Garden — Service Agreement", h1))
+    story.append(Paragraph(f"Project: {c.get('project_title') or 'Garden project'}", body))
+    story.append(Paragraph(f"Agreement reference: {c['id']}", small))
+    story.append(Spacer(1, 8))
+
+    def kv(label, value):
+        return [Paragraph(f"<b>{label}</b>", body), Paragraph(str(value or "—"), body)]
+
+    parties = [
+        kv("Customer", f"{c.get('customer_name')}  {c.get('customer_phone') or ''}"),
+        kv("Contractor", f"{c.get('contractor_name')}  {c.get('contractor_phone') or ''}"),
+        kv("Site address", c.get("site_address")),
+    ]
+    t = Table(parties, colWidths=[45 * mm, 120 * mm])
+    t.setStyle(TableStyle([("VALIGN", (0, 0), (-1, -1), "TOP"), ("BOTTOMPADDING", (0, 0), (-1, -1), 6)]))
+    story.append(t)
+
+    story.append(Paragraph("Agreed terms", h2))
+    terms = [
+        kv("Scope of work", c.get("scope")),
+        kv("Total price", c.get("price")),
+        kv("Timeline", f"{c.get('start_date')} to {c.get('end_date')}"),
+        kv("Deposit", f"{c.get('deposit_percent')}% up front"),
+        kv("Payment terms", c.get("payment_terms")),
+        kv("Materials", c.get("materials")),
+        kv("Guarantee", c.get("warranty")),
+    ]
+    if c.get("notes"):
+        terms.append(kv("Extra notes", c.get("notes")))
+    tt = Table(terms, colWidths=[45 * mm, 120 * mm])
+    tt.setStyle(TableStyle([("VALIGN", (0, 0), (-1, -1), "TOP"), ("BOTTOMPADDING", (0, 0), (-1, -1), 6),
+                            ("LINEBELOW", (0, 0), (-1, -1), 0.3, rlcolors.HexColor("#E6EBE4"))]))
+    story.append(tt)
+
+    if c.get("quote_items"):
+        story.append(Paragraph("Quote breakdown", h2))
+        rows = [[Paragraph(f"<b>{it.get('label')}</b>", body), Paragraph(_fmt_price(it.get('amount', 0)), body)] for it in c.get("quote_items", [])]
+        rows.append([Paragraph("<b>Total</b>", body), Paragraph(_fmt_price(c.get("quote_amount") or 0), body)])
+        qt = Table(rows, colWidths=[120 * mm, 45 * mm])
+        qt.setStyle(TableStyle([("BOTTOMPADDING", (0, 0), (-1, -1), 5),
+                                ("LINEBELOW", (0, 0), (-1, -2), 0.3, rlcolors.HexColor("#E6EBE4")),
+                                ("LINEABOVE", (0, -1), (-1, -1), 0.6, rlcolors.HexColor("#4A7C59"))]))
+        story.append(qt)
+    for label, text in STANDARD_CLAUSES:
+        story.append(Paragraph(f"<b>{label}.</b> {text}", body))
+        story.append(Spacer(1, 3))
+
+    story.append(Paragraph("Signatures", h2))
+    cust = f"{c.get('customer_signature')} — signed {(c.get('customer_signed_at') or '')[:10]}" if c.get("customer_signed") else "Not signed"
+    pro = f"{c.get('contractor_signature')} — signed {(c.get('contractor_signed_at') or '')[:10]}" if c.get("contractor_signed") else "Not signed"
+    sig = Table([kv("Customer signature", cust), kv("Contractor signature", pro)], colWidths=[45 * mm, 120 * mm])
+    sig.setStyle(TableStyle([("VALIGN", (0, 0), (-1, -1), "TOP"), ("BOTTOMPADDING", (0, 0), (-1, -1), 6)]))
+    story.append(sig)
+    if c.get("deposit_paid"):
+        story.append(Spacer(1, 6))
+        story.append(Paragraph(f"Deposit of £{c.get('deposit_amount'):.2f} paid.", body))
+    story.append(Spacer(1, 14))
+    story.append(Paragraph("This document is a record generated by the Glam up your Garden app. It does not affect either party's statutory rights.", small))
+
+    doc.build(story)
+    buf.seek(0)
+    filename = f"agreement-{c['id']}.pdf"
+    return Response(content=buf.read(), media_type="application/pdf",
+                    headers={"Content-Disposition": f"inline; filename={filename}"})
+
+
+def _fmt_price(amount: float) -> str:
+    return f"£{amount:,.0f}" if float(amount).is_integer() else f"£{amount:,.2f}"
+
+
+@api_router.post("/contracts/{contract_id}/quote")
+async def submit_quote(contract_id: str, body: QuoteSubmit, user: dict = Depends(get_current_user)):
+    c = await _contract_or_404(contract_id, user)
+    is_pro = user.get("role") == "admin" or (user.get("role") == "contractor" and c.get("contractor_id") in await owned_contractor_ids(user))
+    if not is_pro:
+        raise HTTPException(status_code=403, detail="Only the contractor can submit a quote")
+    if c.get("deposit_paid"):
+        raise HTTPException(status_code=400, detail="Deposit already paid — quote is locked")
+    items = [{"label": i.label.strip(), "amount": round(float(i.amount), 2)} for i in body.items if i.label.strip()]
+    total = body.amount if body.amount is not None else sum(i["amount"] for i in items)
+    if total is None or total <= 0:
+        raise HTTPException(status_code=400, detail="Enter a quote total or line items")
+    total = round(float(total), 2)
+    now = now_iso()
+    await db.contracts.update_one({"id": contract_id}, {"$set": {
+        "quote_status": "proposed",
+        "quote_amount": total,
+        "quote_items": items,
+        "quote_note": (body.note or "").strip(),
+        "quote_proposed_at": now,
+        "quote_decided_at": None,
+        "price": _fmt_price(total),
+        "updated_at": now,
+    }})
+    fresh = await db.contracts.find_one({"id": contract_id})
+    return {"contract": public_contract(fresh)}
+
+
+@api_router.post("/contracts/{contract_id}/quote/respond")
+async def respond_quote(contract_id: str, body: QuoteRespond, user: dict = Depends(get_current_user)):
+    c = await _contract_or_404(contract_id, user)
+    if c.get("customer_id") != user["user_id"]:
+        raise HTTPException(status_code=403, detail="Only the customer can respond to the quote")
+    if c.get("quote_status") != "proposed":
+        raise HTTPException(status_code=400, detail="There is no quote awaiting your response")
+    now = now_iso()
+    await db.contracts.update_one({"id": contract_id}, {"$set": {
+        "quote_status": "accepted" if body.accept else "declined",
+        "quote_decided_at": now,
+        "updated_at": now,
+    }})
+    fresh = await db.contracts.find_one({"id": contract_id})
+    return {"contract": public_contract(fresh)}
+
+
+def _deposit_ready(c: dict) -> bool:
+    # Deposit unlocks once the customer accepts the quote, or (legacy) once both sign.
+    return c.get("quote_status") == "accepted" or _fully_signed(c)
+
+
+def _contract_deposit_amount(c: dict) -> Optional[float]:
+    amt = _parse_amount(c.get("price") or "")
+    if amt is None or amt <= 0:
+        return None
+    pct = c.get("deposit_percent") or 0
+    return round(amt * pct / 100.0, 2)
+
+
+@api_router.post("/contracts/{contract_id}/deposit")
+async def start_deposit(contract_id: str, body: DepositRequest, user: dict = Depends(get_current_user)):
+    c = await _contract_or_404(contract_id, user)
+    if c.get("customer_id") != user["user_id"]:
+        raise HTTPException(status_code=403, detail="Only the customer pays the deposit")
+    if not _deposit_ready(c):
+        raise HTTPException(status_code=400, detail="Accept the contractor's quote before paying the deposit")
+    if c.get("deposit_paid"):
+        raise HTTPException(status_code=400, detail="Deposit already paid")
+    amount = _contract_deposit_amount(c)
+    if amount is None:
+        raise HTTPException(status_code=400, detail="Set a numeric total price (e.g. £2400) before paying a deposit")
+    if not STRIPE_API_KEY:
+        raise HTTPException(status_code=500, detail="Payments not configured")
+
+    origin = body.origin.rstrip("/")
+    success_url = f"{origin}/contract/{contract_id}?deposit=success&session_id={{CHECKOUT_SESSION_ID}}"
+    cancel_url = f"{origin}/contract/{contract_id}?deposit=cancel"
+
+    if _real_stripe():
+        session = await run_in_threadpool(
+            lambda: _stripe_sdk.checkout.Session.create(
+                mode="payment",
+                line_items=[{
+                    "price_data": {
+                        "currency": "gbp",
+                        "product_data": {"name": f"Deposit — {c.get('project_title') or 'Garden project'}"},
+                        "unit_amount": int(round(amount * 100)),
+                    },
+                    "quantity": 1,
+                }],
+                success_url=success_url,
+                cancel_url=cancel_url,
+                payment_intent_data={"transfer_group": contract_id, "metadata": {"contract_id": contract_id, "kind": "deposit"}},
+                metadata={"contract_id": contract_id, "user_id": user["user_id"], "kind": "deposit"},
+            )
+        )
+        session_id, session_url = session["id"], session["url"]
+    else:
+        stripe = StripeCheckout(api_key=STRIPE_API_KEY)
+        req = CheckoutSessionRequest(
+            amount=float(amount),
+            currency="gbp",
+            success_url=success_url,
+            cancel_url=cancel_url,
+            metadata={"contract_id": contract_id, "user_id": user["user_id"], "kind": "deposit"},
+        )
+        session = await stripe.create_checkout_session(req)
+        session_id, session_url = session.session_id, session.url
+
+    await db.payment_transactions.insert_one({
+        "id": new_id("pay"),
+        "session_id": session_id,
+        "contract_id": contract_id,
+        "user_id": user["user_id"],
+        "amount": float(amount),
+        "currency": "gbp",
+        "payment_status": "initiated",
+        "status": "open",
+        "created_at": now_iso(),
+    })
+    await db.contracts.update_one({"id": contract_id}, {"$set": {"deposit_amount": float(amount), "deposit_session_id": session_id}})
+    return {"url": session_url, "session_id": session_id, "amount": float(amount)}
+
+
+@api_router.get("/payments/status/{session_id}")
+async def payment_status(session_id: str, user: dict = Depends(get_current_user)):
+    tx = await db.payment_transactions.find_one({"session_id": session_id})
+    if not tx:
+        raise HTTPException(status_code=404, detail="Payment not found")
+    if _real_stripe():
+        session = await run_in_threadpool(lambda: _stripe_sdk.checkout.Session.retrieve(session_id))
+        pay_status = session.get("payment_status")
+        stat = session.get("status")
+        amount_total = session.get("amount_total")
+        currency = session.get("currency")
+        charge_id = None
+        if pay_status == "paid" and session.get("payment_intent"):
+            pi = await run_in_threadpool(lambda: _stripe_sdk.PaymentIntent.retrieve(session["payment_intent"]))
+            charge_id = pi.get("latest_charge")
+    else:
+        stripe = StripeCheckout(api_key=STRIPE_API_KEY)
+        status = await stripe.get_checkout_status(session_id)
+        pay_status, stat, amount_total, currency, charge_id = status.payment_status, status.status, status.amount_total, status.currency, None
+
+    updates = {"payment_status": pay_status, "status": stat}
+    if pay_status == "paid" and tx.get("payment_status") != "paid":
+        updates["paid_at"] = now_iso()
+        if charge_id:
+            updates["charge_id"] = charge_id
+        cset = {"deposit_paid": True}
+        if charge_id:
+            cset["deposit_charge_id"] = charge_id
+        await db.contracts.update_one({"id": tx["contract_id"]}, {"$set": cset})
+    await db.payment_transactions.update_one({"session_id": session_id}, {"$set": updates})
+    return {"payment_status": pay_status, "status": stat, "amount_total": amount_total, "currency": currency}
+
+
+# ---------------------------------------------------------------------------
+# Stripe Connect: contractor payout onboarding + admin fund release
+# ---------------------------------------------------------------------------
+DEFAULT_FEE_PERCENT = 10.0
+
+
+async def _platform_fee_percent() -> float:
+    s = await db.settings.find_one({"id": "global"})
+    if s and s.get("platform_fee_percent") is not None:
+        return float(s["platform_fee_percent"])
+    return DEFAULT_FEE_PERCENT
+
+
+def _connect_guard():
+    if not _real_stripe():
+        raise HTTPException(status_code=503, detail="Contractor payouts need a real Stripe test key. Add STRIPE_CONNECT_SECRET_KEY (sk_test_...) to enable Connect onboarding & transfers.")
+
+
+@api_router.post("/connect/onboard")
+async def connect_onboard(body: ConnectOnboard, user: dict = Depends(get_current_user)):
+    _connect_guard()
+    ids = await owned_contractor_ids(user)
+    if not ids:
+        raise HTTPException(status_code=403, detail="Claim and get approval for a listing first")
+    cid = ids[0]
+    contractor = await db.contractors.find_one({"id": cid})
+    account_id = contractor.get("stripe_account_id")
+    if not account_id:
+        account = await run_in_threadpool(lambda: _stripe_sdk.Account.create(
+            type="express",
+            email=user.get("email"),
+            capabilities={"transfers": {"requested": True}},
+            metadata={"contractor_id": cid},
+        ))
+        account_id = account["id"]
+        await db.contractors.update_one({"id": cid}, {"$set": {"stripe_account_id": account_id, "onboarding_status": "created"}})
+    origin = body.origin.rstrip("/")
+    link = await run_in_threadpool(lambda: _stripe_sdk.AccountLink.create(
+        account=account_id,
+        refresh_url=f"{origin}/contractor-hub?connect=refresh",
+        return_url=f"{origin}/contractor-hub?connect=return",
+        type="account_onboarding",
+    ))
+    return {"url": link["url"], "account_id": account_id}
+
+
+@api_router.get("/connect/status")
+async def connect_status(user: dict = Depends(get_current_user)):
+    ids = await owned_contractor_ids(user)
+    if not ids:
+        return {"connected": False, "payouts_enabled": False, "onboarded": False}
+    contractor = await db.contractors.find_one({"id": ids[0]})
+    account_id = contractor.get("stripe_account_id")
+    if not account_id or not _real_stripe():
+        return {"connected": False, "payouts_enabled": bool(contractor.get("payouts_enabled")), "onboarded": False}
+    account = await run_in_threadpool(lambda: _stripe_sdk.Account.retrieve(account_id))
+    payouts = bool(account.get("payouts_enabled"))
+    details = bool(account.get("details_submitted"))
+    await db.contractors.update_one({"id": ids[0]}, {"$set": {
+        "payouts_enabled": payouts,
+        "charges_enabled": bool(account.get("charges_enabled")),
+        "onboarding_status": "complete" if details else "incomplete",
+    }})
+    return {"connected": True, "payouts_enabled": payouts, "onboarded": details,
+            "currently_due": (account.get("requirements") or {}).get("currently_due", [])}
+
+
+@api_router.get("/admin/settings")
+async def get_settings(user: dict = Depends(get_current_user)):
+    if user.get("role") != "admin":
+        raise HTTPException(status_code=403, detail="Admins only")
+    return {"platform_fee_percent": await _platform_fee_percent(), "connect_enabled": _real_stripe()}
+
+
+@api_router.post("/admin/settings")
+async def set_settings(body: SettingsInput, user: dict = Depends(get_current_user)):
+    if user.get("role") != "admin":
+        raise HTTPException(status_code=403, detail="Admins only")
+    pct = max(0.0, min(50.0, float(body.platform_fee_percent)))
+    await db.settings.update_one({"id": "global"}, {"$set": {"platform_fee_percent": pct}}, upsert=True)
+    return {"platform_fee_percent": pct}
+
+
+@api_router.get("/admin/releases")
+async def list_releases(user: dict = Depends(get_current_user)):
+    if user.get("role") != "admin":
+        raise HTTPException(status_code=403, detail="Admins only")
+    docs = await db.contracts.find(
+        {"deposit_paid": True, "released": {"$ne": True}},
+        {"_id": 0, "messages": 0},
+    ).sort("updated_at", -1).to_list(100)
+    fee_pct = await _platform_fee_percent()
+    out = []
+    for d in docs:
+        contractor = await db.contractors.find_one({"id": d.get("contractor_id")}, {"_id": 0})
+        amt = float(d.get("deposit_amount") or 0)
+        fee = round(amt * fee_pct / 100.0, 2)
+        out.append({
+            "contract_id": d["id"],
+            "project_title": d.get("project_title"),
+            "customer_name": d.get("customer_name"),
+            "contractor_name": d.get("contractor_name"),
+            "deposit_amount": amt,
+            "platform_fee": fee,
+            "net_to_contractor": round(amt - fee, 2),
+            "job_status": d.get("status"),
+            "payouts_enabled": bool(contractor and contractor.get("payouts_enabled")),
+            "has_stripe_account": bool(contractor and contractor.get("stripe_account_id")),
+        })
+    return {"releases": out, "fee_percent": fee_pct, "connect_enabled": _real_stripe()}
+
+
+@api_router.post("/admin/contracts/{contract_id}/release")
+async def release_deposit(contract_id: str, body: ReleaseInput, user: dict = Depends(get_current_user)):
+    if user.get("role") != "admin":
+        raise HTTPException(status_code=403, detail="Admins only")
+    c = await db.contracts.find_one({"id": contract_id})
+    if not c:
+        raise HTTPException(status_code=404, detail="Contract not found")
+    _connect_guard()
+    if not c.get("deposit_paid"):
+        raise HTTPException(status_code=400, detail="No paid deposit to release")
+    if c.get("released"):
+        raise HTTPException(status_code=400, detail="Deposit already released")
+    contractor = await db.contractors.find_one({"id": c.get("contractor_id")})
+    account_id = contractor and contractor.get("stripe_account_id")
+    if not account_id:
+        raise HTTPException(status_code=400, detail="Contractor hasn't connected a payout account yet")
+    if not contractor.get("payouts_enabled"):
+        raise HTTPException(status_code=400, detail="Contractor's payouts aren't enabled yet (onboarding incomplete)")
+
+    amt = float(c.get("deposit_amount") or 0)
+    fee_pct = body.fee_percent if body.fee_percent is not None else await _platform_fee_percent()
+    fee_pct = max(0.0, min(50.0, float(fee_pct)))
+    fee = round(amt * fee_pct / 100.0, 2)
+    net = round(amt - fee, 2)
+
+    kwargs = dict(
+        amount=int(round(net * 100)),
+        currency="gbp",
+        destination=account_id,
+        transfer_group=contract_id,
+        metadata={"contract_id": contract_id, "kind": "deposit_release"},
+    )
+    if c.get("deposit_charge_id"):
+        kwargs["source_transaction"] = c["deposit_charge_id"]
+    transfer = await run_in_threadpool(lambda: _stripe_sdk.Transfer.create(
+        idempotency_key=f"release_{contract_id}", **kwargs))
+    now = now_iso()
+    await db.contracts.update_one({"id": contract_id}, {"$set": {
+        "released": True, "transfer_id": transfer["id"],
+        "release_amount": net, "platform_fee": fee, "released_at": now, "updated_at": now,
+    }})
+    return {"ok": True, "transfer_id": transfer["id"], "net_to_contractor": net, "platform_fee": fee}
+
+
+@api_router.get("/reminders")
+async def review_reminders(user: dict = Depends(get_current_user)):
+    docs = await db.contracts.find(
+        {"customer_id": user["user_id"], "status": "completed", "reviewed": {"$ne": True}, "review_dismissed": {"$ne": True}},
+        {"_id": 0, "messages": 0},
+    ).sort("updated_at", -1).to_list(50)
+    prompts = [{
+        "contract_id": d["id"],
+        "contractor_id": d.get("contractor_id"),
+        "contractor_name": d.get("contractor_name"),
+        "project_title": d.get("project_title"),
+    } for d in docs]
+    return {"review_prompts": prompts, "count": len(prompts)}
+
+
+@api_router.post("/contracts/{contract_id}/dismiss-review")
+async def dismiss_review_prompt(contract_id: str, user: dict = Depends(get_current_user)):
+    c = await _contract_or_404(contract_id, user)
+    if c.get("customer_id") != user["user_id"]:
+        raise HTTPException(status_code=403, detail="Not your contract")
+    await db.contracts.update_one({"id": contract_id}, {"$set": {"review_dismissed": True}})
+    return {"ok": True}
 
 
 # ---------------------------------------------------------------------------

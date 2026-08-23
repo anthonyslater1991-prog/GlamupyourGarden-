@@ -129,6 +129,15 @@ export default function Profile() {
           <Row icon="hash" label="Community Rooms" onPress={() => router.push("/rooms")} testID="profile-rooms" />
         </View>
 
+        {user?.role === "contractor" && (
+          <>
+            <Text style={styles.groupTitle}>Contractor</Text>
+            <View style={styles.section}>
+              <Row icon="tool" label="Contractor Hub" onPress={() => router.push("/contractor-hub")} testID="profile-contractor-hub" />
+            </View>
+          </>
+        )}
+
         {user?.role === "admin" && (
           <>
             <Text style={styles.groupTitle}>Admin</Text>

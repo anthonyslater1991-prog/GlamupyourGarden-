@@ -9,13 +9,14 @@ import {
   TextInput,
   ActivityIndicator,
   Platform,
+  Linking,
 } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { Feather } from "@expo/vector-icons";
 import { KeyboardAvoidingView } from "react-native-keyboard-controller";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import * as Haptics from "expo-haptics";
-import { apiFetch } from "@/src/lib/api";
+import { apiFetch, API, getMemToken } from "@/src/lib/api";
 import { useAuth } from "@/src/context/AuthContext";
 import { useToast } from "@/src/components/Toast";
 import { colors, spacing, radius, fonts } from "@/src/theme";
@@ -46,6 +47,12 @@ type Contract = {
   contractor_signed: boolean;
   contractor_signature?: string;
   contractor_signed_at?: string;
+  deposit_paid?: boolean;
+  deposit_amount?: number | null;
+  quote_status?: string;
+  quote_amount?: number | null;
+  quote_items?: { label: string; amount: number }[];
+  quote_note?: string;
   messages?: Msg[];
   stages: Stage[];
   progress_index: number;
@@ -170,12 +177,102 @@ export default function ContractScreen() {
     }
   };
 
+  const params = useLocalSearchParams<{ deposit?: string; session_id?: string }>();
+  const [payBusy, setPayBusy] = useState(false);
+  const [quoteOpen, setQuoteOpen] = useState(false);
+  const [quoteItems, setQuoteItems] = useState<{ label: string; amount: string }[]>([{ label: "Materials", amount: "" }, { label: "Labour", amount: "" }]);
+  const [quoteNote, setQuoteNote] = useState("");
+  const [quoteBusy, setQuoteBusy] = useState(false);
+
+  const quoteTotal = quoteItems.reduce((sum, it) => sum + (parseFloat(it.amount) || 0), 0);
+
+  const openQuote = () => {
+    if (c?.quote_items?.length) {
+      setQuoteItems(c.quote_items.map((i) => ({ label: i.label, amount: String(i.amount) })));
+      setQuoteNote(c.quote_note || "");
+    }
+    setQuoteOpen(true);
+  };
+
+  const submitQuote = async () => {
+    const items = quoteItems
+      .filter((i) => i.label.trim() && parseFloat(i.amount) > 0)
+      .map((i) => ({ label: i.label.trim(), amount: parseFloat(i.amount) }));
+    if (items.length === 0) { toast.show("Add at least one line item with an amount", "error"); return; }
+    setQuoteBusy(true);
+    try {
+      const r = await apiFetch<{ contract: Contract }>(`/contracts/${id}/quote`, { method: "POST", body: { items, note: quoteNote.trim() } });
+      setC(r.contract);
+      setQuoteOpen(false);
+      toast.show("Quote sent to the customer 📩", "success");
+    } catch (e: any) { toast.show(e.message, "error"); }
+    finally { setQuoteBusy(false); }
+  };
+
+  const respondQuote = async (accept: boolean) => {
+    setQuoteBusy(true);
+    try {
+      const r = await apiFetch<{ contract: Contract }>(`/contracts/${id}/quote/respond`, { method: "POST", body: { accept } });
+      setC(r.contract);
+      toast.show(accept ? "Quote accepted — you can pay the deposit now 🌱" : "Quote declined. Your contractor can send a new one.", accept ? "success" : "info");
+    } catch (e: any) { toast.show(e.message, "error"); }
+    finally { setQuoteBusy(false); }
+  };
+
+  // Handle return from Stripe Checkout
+  useEffect(() => {
+    if (params.deposit === "success" && params.session_id) {
+      (async () => {
+        try {
+          const r = await apiFetch<{ payment_status: string }>(`/payments/status/${params.session_id}`);
+          if (r.payment_status === "paid") {
+            toast.show("Deposit paid — thank you! 🎉", "success");
+          } else {
+            toast.show("Payment received, confirming…", "info");
+          }
+          load();
+        } catch {}
+      })();
+    } else if (params.deposit === "cancel") {
+      toast.show("Payment cancelled", "info");
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [params.deposit, params.session_id]);
+
+  const payDeposit = async () => {
+    setPayBusy(true);
+    try {
+      const origin = Platform.OS === "web" && typeof window !== "undefined"
+        ? window.location.origin
+        : (API.replace(/\/api$/, ""));
+      const r = await apiFetch<{ url: string }>(`/contracts/${id}/deposit`, { method: "POST", body: { origin } });
+      if (Platform.OS === "web" && typeof window !== "undefined") {
+        window.location.href = r.url;
+      } else {
+        await Linking.openURL(r.url);
+      }
+    } catch (e: any) {
+      toast.show(e.message, "error");
+      setPayBusy(false);
+    }
+  };
+
+  const openPdf = async () => {
+    const url = `${API}/contracts/${id}/pdf?token=${encodeURIComponent(getMemToken() || "")}`;
+    if (Platform.OS === "web" && typeof window !== "undefined") {
+      window.open(url, "_blank");
+    } else {
+      await Linking.openURL(url);
+    }
+  };
+
   if (!c) {
     return <View style={styles.center}><ActivityIndicator size="large" color={colors.brand} /></View>;
   }
 
   const meta = STATUS_META[c.status] || STATUS_META.draft;
   const canEdit = !fullySigned;
+  const depositReady = c.quote_status === "accepted" || fullySigned;
   const progressPct = c.stages.length ? Math.round((c.progress_index / c.stages.length) * 100) : 0;
 
   return (
@@ -242,6 +339,62 @@ export default function ContractScreen() {
           {!!c.notes && <Term label="Extra notes" value={c.notes} />}
         </View>
 
+        {/* Quote */}
+        <View style={styles.card}>
+          <View style={styles.cardHeadRow}>
+            <Text style={styles.cardHead}>Quote 💷</Text>
+            {c.quote_status && c.quote_status !== "none" && (
+              <View style={[styles.statusPill, { backgroundColor: (c.quote_status === "accepted" ? colors.success : c.quote_status === "declined" ? colors.error : colors.brandTertiary) + "22" }]}>
+                <Text style={[styles.statusText, { color: c.quote_status === "accepted" ? colors.success : c.quote_status === "declined" ? colors.error : colors.brandTertiary }]}>
+                  {c.quote_status === "accepted" ? "Accepted" : c.quote_status === "declined" ? "Declined" : "Awaiting response"}
+                </Text>
+              </View>
+            )}
+          </View>
+
+          {c.quote_status && c.quote_status !== "none" && c.quote_items?.length ? (
+            <>
+              {c.quote_items.map((it, i) => (
+                <View key={i} style={styles.quoteRow}>
+                  <Text style={styles.quoteLabel}>{it.label}</Text>
+                  <Text style={styles.quoteAmt}>£{it.amount.toLocaleString()}</Text>
+                </View>
+              ))}
+              <View style={[styles.quoteRow, styles.quoteTotalRow]}>
+                <Text style={styles.quoteTotalLabel}>Total</Text>
+                <Text style={styles.quoteTotalAmt}>£{(c.quote_amount || 0).toLocaleString()}</Text>
+              </View>
+              {!!c.quote_note && <Text style={styles.quoteNote}>{c.quote_note}</Text>}
+            </>
+          ) : (
+            <Text style={styles.clauseHint}>{amProSide ? "Send the customer a quote with your price breakdown. Once they accept, they can pay the deposit." : "Your contractor hasn't sent a quote yet."}</Text>
+          )}
+
+          {/* Pro actions */}
+          {amProSide && c.quote_status !== "accepted" && !c.deposit_paid && (
+            <Pressable testID="submit-quote-btn" style={styles.primaryBtn} onPress={openQuote}>
+              <Feather name="edit-3" size={16} color="#fff" />
+              <Text style={styles.primaryText}>{c.quote_status === "proposed" || c.quote_status === "declined" ? "Update quote" : "Submit a quote"}</Text>
+            </Pressable>
+          )}
+
+          {/* Customer actions */}
+          {!amProSide && c.quote_status === "proposed" && (
+            <View style={styles.quoteBtnRow}>
+              <Pressable testID="decline-quote" style={[styles.quoteBtn, styles.declineBtn]} disabled={quoteBusy} onPress={() => respondQuote(false)}>
+                <Feather name="x" size={15} color={colors.error} />
+                <Text style={[styles.quoteBtnText, { color: colors.error }]}>Decline</Text>
+              </Pressable>
+              <Pressable testID="accept-quote" style={[styles.quoteBtn, styles.acceptBtn]} disabled={quoteBusy} onPress={() => respondQuote(true)}>
+                {quoteBusy ? <ActivityIndicator color="#fff" /> : (<><Feather name="check" size={15} color="#fff" /><Text style={[styles.quoteBtnText, { color: "#fff" }]}>Accept quote</Text></>)}
+              </Pressable>
+            </View>
+          )}
+          {!amProSide && c.quote_status === "accepted" && !c.deposit_paid && (
+            <Text style={styles.quoteNote}>You accepted this quote — pay the deposit below to get started.</Text>
+          )}
+        </View>
+
         {/* Standard clauses */}
         <Pressable style={styles.card} onPress={() => setShowClauses((s) => !s)}>
           <View style={styles.cardHeadRow}>
@@ -281,6 +434,34 @@ export default function ContractScreen() {
             </View>
           )}
         </View>
+
+        {/* Deposit payment (customer, once quote accepted) */}
+        {depositReady && !amProSide && (
+          <View style={styles.card}>
+            <Text style={styles.cardHead}>Deposit</Text>
+            {c.deposit_paid ? (
+              <View style={styles.signedNote}>
+                <Feather name="check-circle" size={16} color={colors.success} />
+                <Text style={styles.signedNoteText}>Deposit{c.deposit_amount ? ` of £${c.deposit_amount.toFixed(2)}` : ""} paid — your contractor can crack on! 🌱</Text>
+              </View>
+            ) : (
+              <>
+                <Text style={styles.clauseHint}>Pay the agreed {c.deposit_percent}% deposit securely to get the job started. Test mode — use card 4242 4242 4242 4242.</Text>
+                <Pressable testID="pay-deposit" style={styles.primaryBtn} onPress={payDeposit} disabled={payBusy}>
+                  {payBusy ? <ActivityIndicator color="#fff" /> : (<><Feather name="credit-card" size={16} color="#fff" /><Text style={styles.primaryText}>Pay deposit</Text></>)}
+                </Pressable>
+              </>
+            )}
+          </View>
+        )}
+
+        {/* Download PDF (once fully signed) */}
+        {fullySigned && (
+          <Pressable testID="download-pdf" style={styles.pdfBtn} onPress={openPdf}>
+            <Feather name="download" size={16} color={colors.brand} />
+            <Text style={styles.pdfText}>Download signed agreement (PDF)</Text>
+          </Pressable>
+        )}
 
         {/* Job tracker */}
         {fullySigned && (
@@ -404,6 +585,67 @@ export default function ContractScreen() {
           </View>
         </KeyboardAvoidingView>
       </Modal>
+
+      {/* Quote modal (contractor) */}
+      <Modal visible={quoteOpen} transparent animationType="slide" onRequestClose={() => setQuoteOpen(false)}>
+        <KeyboardAvoidingView behavior={Platform.OS === "ios" ? "padding" : "height"} style={styles.modalRoot}>
+          <Pressable style={styles.backdrop} onPress={() => setQuoteOpen(false)} />
+          <View style={[styles.sheet, { paddingBottom: insets.bottom + spacing.lg }]}>
+            <View style={styles.sheetHandle} />
+            <Text style={styles.sheetTitle}>Send a quote 💷</Text>
+            <Text style={styles.clauseHint}>Add your price breakdown. The customer accepts before paying the deposit.</Text>
+            <ScrollView style={{ maxHeight: 320 }} keyboardShouldPersistTaps="handled">
+              {quoteItems.map((it, i) => (
+                <View key={i} style={styles.qItemRow}>
+                  <TextInput
+                    testID={`quote-label-${i}`}
+                    style={[styles.input, { flex: 1 }]}
+                    value={it.label}
+                    onChangeText={(t) => setQuoteItems((arr) => arr.map((x, j) => j === i ? { ...x, label: t } : x))}
+                    placeholder="e.g. Materials"
+                    placeholderTextColor={colors.muted}
+                  />
+                  <TextInput
+                    testID={`quote-amount-${i}`}
+                    style={[styles.input, { width: 100 }]}
+                    value={it.amount}
+                    onChangeText={(t) => setQuoteItems((arr) => arr.map((x, j) => j === i ? { ...x, amount: t.replace(/[^0-9.]/g, "") } : x))}
+                    placeholder="£0"
+                    keyboardType="numeric"
+                    placeholderTextColor={colors.muted}
+                  />
+                  {quoteItems.length > 1 && (
+                    <Pressable testID={`quote-remove-${i}`} onPress={() => setQuoteItems((arr) => arr.filter((_, j) => j !== i))}>
+                      <Feather name="x-circle" size={22} color={colors.muted} />
+                    </Pressable>
+                  )}
+                </View>
+              ))}
+              <Pressable testID="quote-add-item" style={styles.addItemBtn} onPress={() => setQuoteItems((arr) => [...arr, { label: "", amount: "" }])}>
+                <Feather name="plus" size={15} color={colors.brand} />
+                <Text style={styles.addItemText}>Add line item</Text>
+              </Pressable>
+              <Text style={styles.fieldLabel}>Note (optional)</Text>
+              <TextInput
+                testID="quote-note"
+                style={[styles.input, styles.inputMultiline]}
+                value={quoteNote}
+                onChangeText={setQuoteNote}
+                multiline
+                placeholder="What's included, timings, anything else…"
+                placeholderTextColor={colors.muted}
+              />
+            </ScrollView>
+            <View style={styles.quoteTotalPreview}>
+              <Text style={styles.quoteTotalLabel}>Quote total</Text>
+              <Text style={styles.quoteTotalAmt}>£{quoteTotal.toLocaleString()}</Text>
+            </View>
+            <Pressable testID="send-quote" style={styles.primaryBtn} onPress={submitQuote} disabled={quoteBusy}>
+              {quoteBusy ? <ActivityIndicator color="#fff" /> : <Text style={styles.primaryText}>Send quote to customer</Text>}
+            </Pressable>
+          </View>
+        </KeyboardAvoidingView>
+      </Modal>
     </View>
   );
 }
@@ -474,6 +716,8 @@ const styles = StyleSheet.create({
   primaryText: { color: "#fff", fontFamily: fonts.text, fontWeight: "700", fontSize: 15 },
   signedNote: { flexDirection: "row", alignItems: "center", gap: spacing.sm, backgroundColor: "#F0F6F1", padding: spacing.md, borderRadius: radius.md },
   signedNoteText: { fontFamily: fonts.text, color: colors.onSurfaceSecondary, fontSize: 13, flex: 1 },
+  pdfBtn: { flexDirection: "row", alignItems: "center", justifyContent: "center", gap: spacing.sm, backgroundColor: colors.surfaceSecondary, borderWidth: 1.5, borderColor: colors.brand, height: 50, borderRadius: radius.md },
+  pdfText: { fontFamily: fonts.text, fontWeight: "700", color: colors.brand, fontSize: 14 },
   progressBarBg: { height: 10, borderRadius: 5, backgroundColor: colors.surfaceTertiary, overflow: "hidden" },
   progressBarFill: { height: 10, borderRadius: 5, backgroundColor: colors.brand },
   progressLabel: { fontFamily: fonts.text, fontWeight: "700", color: colors.onSurface, fontSize: 13 },
@@ -499,4 +743,20 @@ const styles = StyleSheet.create({
   fieldLabel: { fontFamily: fonts.text, fontWeight: "700", color: colors.onSurfaceSecondary, fontSize: 13, marginBottom: 4 },
   input: { backgroundColor: colors.surface, borderRadius: radius.md, borderWidth: 1, borderColor: colors.border, padding: spacing.md, fontFamily: fonts.text, fontSize: 15, color: colors.onSurface },
   inputMultiline: { minHeight: 72, textAlignVertical: "top" },
+  quoteRow: { flexDirection: "row", justifyContent: "space-between", alignItems: "center", paddingVertical: 6, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: colors.divider },
+  quoteLabel: { fontFamily: fonts.text, color: colors.onSurfaceSecondary, fontSize: 14 },
+  quoteAmt: { fontFamily: fonts.text, fontWeight: "700", color: colors.onSurface, fontSize: 14 },
+  quoteTotalRow: { borderBottomWidth: 0, borderTopWidth: 2, borderTopColor: colors.brand, marginTop: 2, paddingTop: 8 },
+  quoteTotalLabel: { fontFamily: fonts.text, fontWeight: "800", color: colors.onSurface, fontSize: 15 },
+  quoteTotalAmt: { fontFamily: fonts.display, color: colors.brand, fontSize: 18 },
+  quoteNote: { fontFamily: fonts.text, color: colors.muted, fontSize: 13, lineHeight: 19, marginTop: spacing.xs, fontStyle: "italic" },
+  quoteBtnRow: { flexDirection: "row", gap: spacing.md, marginTop: spacing.xs },
+  quoteBtn: { flex: 1, flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 6, height: 48, borderRadius: radius.md },
+  acceptBtn: { backgroundColor: colors.brand },
+  declineBtn: { backgroundColor: colors.surface, borderWidth: 1.5, borderColor: colors.error },
+  quoteBtnText: { fontFamily: fonts.text, fontWeight: "700", fontSize: 14 },
+  qItemRow: { flexDirection: "row", alignItems: "center", gap: spacing.sm, marginBottom: spacing.sm },
+  addItemBtn: { flexDirection: "row", alignItems: "center", gap: 6, alignSelf: "flex-start", paddingVertical: spacing.sm },
+  addItemText: { fontFamily: fonts.text, fontWeight: "700", color: colors.brand, fontSize: 14 },
+  quoteTotalPreview: { flexDirection: "row", justifyContent: "space-between", alignItems: "center", paddingVertical: spacing.sm, borderTopWidth: 2, borderTopColor: colors.brand, marginTop: spacing.xs },
 });

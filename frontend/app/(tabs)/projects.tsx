@@ -23,11 +23,16 @@ export default function Projects() {
   const [projects, setProjects] = useState<Project[]>([]);
   const [refreshing, setRefreshing] = useState(false);
   const [loaded, setLoaded] = useState(false);
+  const [reminderCount, setReminderCount] = useState(0);
 
   const load = useCallback(async () => {
     try {
       const p = await apiFetch<{ projects: Project[] }>("/projects");
       setProjects(p.projects);
+    } catch {}
+    try {
+      const r = await apiFetch<{ count: number }>("/reminders");
+      setReminderCount(r.count);
     } catch {}
     setLoaded(true);
   }, []);
@@ -55,6 +60,9 @@ export default function Projects() {
       <Pressable testID="open-agreements" style={styles.agreementsRow} onPress={() => router.push("/contracts")}>
         <Feather name="file-text" size={16} color={colors.brand} />
         <Text style={styles.agreementsText}>My agreements</Text>
+        {reminderCount > 0 && (
+          <View style={styles.reviewBadge}><Text style={styles.reviewBadgeText}>{reminderCount} to review</Text></View>
+        )}
         <Feather name="chevron-right" size={16} color={colors.muted} />
       </Pressable>
 
@@ -147,6 +155,8 @@ const styles = StyleSheet.create({
   cardTitle: { fontFamily: fonts.text, fontWeight: "700", color: colors.onSurface },
   agreementsRow: { flexDirection: "row", alignItems: "center", gap: spacing.sm, marginHorizontal: spacing.lg, marginBottom: spacing.sm, backgroundColor: colors.surfaceSecondary, borderWidth: 1, borderColor: colors.border, borderRadius: radius.md, paddingVertical: spacing.md, paddingHorizontal: spacing.lg },
   agreementsText: { flex: 1, fontFamily: fonts.text, fontWeight: "700", color: colors.onSurface, fontSize: 14 },
+  reviewBadge: { backgroundColor: colors.brandTertiary, paddingVertical: 3, paddingHorizontal: 8, borderRadius: radius.pill },
+  reviewBadgeText: { fontFamily: fonts.text, fontWeight: "800", color: colors.onBrandTertiary, fontSize: 11 },
   empty: { alignItems: "center", padding: spacing.xl, marginTop: spacing["3xl"], gap: spacing.sm },
   emptyEmoji: { fontSize: 44 },
   emptyTitle: { fontFamily: fonts.display, fontSize: 22, color: colors.onSurface },

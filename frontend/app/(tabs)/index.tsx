@@ -51,6 +51,7 @@ export default function Home() {
   const [refreshing, setRefreshing] = useState(false);
   const [nearby, setNearby] = useState<any[]>([]);
   const [nearbyDismissed, setNearbyDismissed] = useState(false);
+  const [reviewPrompts, setReviewPrompts] = useState<any[]>([]);
 
   const load = useCallback(async () => {
     try {
@@ -71,6 +72,10 @@ export default function Home() {
       try {
         const na = await apiFetch<{ alerts: any[] }>("/alerts/nearby");
         setNearby(na.alerts);
+      } catch {}
+      try {
+        const rem = await apiFetch<{ review_prompts: any[] }>("/reminders");
+        setReviewPrompts(rem.review_prompts);
       } catch {}
     } catch (e: any) {
       console.log("home load", e.message);
@@ -155,6 +160,27 @@ export default function Home() {
             </View>
           )}
         </View>
+
+        {/* Review reminder — job complete */}
+        {reviewPrompts.length > 0 && (
+          <Pressable
+            testID="review-reminder"
+            style={[styles.alertCard, { borderColor: colors.brandTertiary }]}
+            onPress={() => router.push(`/contractor/${reviewPrompts[0].contractor_id}?review=1&contract_id=${reviewPrompts[0].contract_id}`)}
+          >
+            <View style={[styles.alertIcon, { backgroundColor: colors.brandTertiary }]}>
+              <Feather name="star" size={18} color="#fff" />
+            </View>
+            <View style={{ flex: 1 }}>
+              <Text style={styles.alertTitle}>Your job is complete! 🌟</Text>
+              <Text style={styles.alertSub}>
+                Leave a photo review for {reviewPrompts[0].contractor_name}
+                {reviewPrompts.length > 1 ? ` (+${reviewPrompts.length - 1} more)` : ""}
+              </Text>
+            </View>
+            <Feather name="chevron-right" size={18} color={colors.muted} />
+          </Pressable>
+        )}
 
         {/* Nearby top-rated pro alert */}
         {nearby.length > 0 && !nearbyDismissed && (

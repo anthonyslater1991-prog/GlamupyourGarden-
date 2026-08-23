@@ -30,7 +30,7 @@ type Review = { id: string; author_name: string; rating: number; text: string; i
 type Project = { id: string; title: string };
 
 export default function ContractorDetail() {
-  const { id } = useLocalSearchParams<{ id: string }>();
+  const { id, review: reviewParam, contract_id: contractIdParam } = useLocalSearchParams<{ id: string; review?: string; contract_id?: string }>();
   const insets = useSafeAreaInsets();
   const router = useRouter();
   const toast = useToast();
@@ -103,6 +103,10 @@ export default function ContractorDetail() {
 
   useEffect(() => { load(); }, [load]);
 
+  useEffect(() => {
+    if (reviewParam === "1") setReviewOpen(true);
+  }, [reviewParam]);
+
   const addReviewPhoto = async () => {
     if (reviewPhotos.length >= 6) { toast.show("Up to 6 photos", "error"); return; }
     const uri = await pickFromLibrary();
@@ -123,7 +127,7 @@ export default function ContractorDetail() {
     }
     setSubmitting(true);
     try {
-      await apiFetch(`/contractors/${id}/reviews`, { method: "POST", body: { rating, text: text.trim(), image_paths: reviewPhotos } });
+      await apiFetch(`/contractors/${id}/reviews`, { method: "POST", body: { rating, text: text.trim(), image_paths: reviewPhotos, contract_id: contractIdParam || null } });
       setText("");
       setRating(5);
       setReviewPhotos([]);

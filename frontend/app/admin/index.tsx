@@ -29,6 +29,11 @@ export default function AdminDashboard() {
   const [projects, setProjects] = useState<AdminProject[]>([]);
   const [polls, setPolls] = useState<Poll[]>([]);
   const [reports, setReports] = useState<Report[]>([]);
+  const [claims, setClaims] = useState<any[]>([]);
+  const [releases, setReleases] = useState<any[]>([]);
+  const [feePercent, setFeePercent] = useState<string>("10");
+  const [connectEnabled, setConnectEnabled] = useState(false);
+  const [releaseBusy, setReleaseBusy] = useState<string | null>(null);
   const [refreshing, setRefreshing] = useState(false);
   const [selected, setSelected] = useState<AdminProject | null>(null);
   const [createOpen, setCreateOpen] = useState(false);
@@ -50,6 +55,12 @@ export default function AdminDashboard() {
       setPolls(pl.polls);
       const rp = await apiFetch<{ reports: Report[] }>("/admin/reports");
       setReports(rp.reports);
+      const cl = await apiFetch<{ claims: any[] }>("/admin/claims");
+      setClaims(cl.claims);
+      const rel = await apiFetch<{ releases: any[]; fee_percent: number; connect_enabled: boolean }>("/admin/releases");
+      setReleases(rel.releases);
+      setFeePercent(String(rel.fee_percent));
+      setConnectEnabled(rel.connect_enabled);
     } catch (e: any) {
       toast.show(e.message || "Failed to load", "error");
     }
@@ -97,6 +108,34 @@ export default function AdminDashboard() {
     } catch (e: any) {
       toast.show(e.message, "error");
     }
+  };
+
+  const actOnClaim = async (contractorId: string, action: string) => {
+    try {
+      await apiFetch(`/admin/claims/${contractorId}/action`, { method: "POST", body: { action } });
+      toast.show(action === "approve" ? "Claim approved ✅" : "Claim rejected", "success");
+      load();
+    } catch (e: any) {
+      toast.show(e.message, "error");
+    }
+  };
+
+  const saveFee = async () => {
+    try {
+      const r = await apiFetch<{ platform_fee_percent: number }>("/admin/settings", { method: "POST", body: { platform_fee_percent: parseFloat(feePercent) || 0 } });
+      setFeePercent(String(r.platform_fee_percent));
+      toast.show(`Commission set to ${r.platform_fee_percent}%`, "success");
+    } catch (e: any) { toast.show(e.message, "error"); }
+  };
+
+  const releaseFunds = async (contractId: string) => {
+    setReleaseBusy(contractId);
+    try {
+      const r = await apiFetch<{ net_to_contractor: number }>(`/admin/contracts/${contractId}/release`, { method: "POST", body: {} });
+      toast.show(`Released £${r.net_to_contractor} to the contractor ✅`, "success");
+      load();
+    } catch (e: any) { toast.show(e.message, "error"); }
+    finally { setReleaseBusy(null); }
   };
 
   const activatePoll = async (id: string) => {
@@ -207,6 +246,74 @@ export default function AdminDashboard() {
             )}
           </View>
         ))}
+
+        {/* Contractor claims */}
+        <Text style={styles.sectionTitle}>Contractor claims 🔧</Text>
+        {claims.length === 0 ? (
+          <Text style={styles.empty}>No pending claims</Text>
+        ) : (
+          claims.map((c) => (
+            <View key={c.id} style={styles.reportCard} testID={`claim-${c.id}`}>
+              <View style={styles.reportTop}>
+                <Text style={styles.reportName}>{c.name}</Text>
+              </View>
+              <Text style={styles.reportMeta}>Requested by {c.claim_user_name || "a contractor"} · {c.location}</Text>
+              <View style={styles.actionRow}>
+                <Pressable testID={`approve-claim-${c.id}`} style={[styles.actionBtn, styles.clearBtn]} onPress={() => actOnClaim(c.id, "approve")}>
+                  <Feather name="check" size={13} color={colors.brand} />
+                  <Text style={styles.clearText}>Approve</Text>
+                </Pressable>
+                <Pressable testID={`reject-claim-${c.id}`} style={[styles.actionBtn, styles.suspendBtn]} onPress={() => actOnClaim(c.id, "reject")}>
+                  <Feather name="x" size={13} color="#fff" />
+                  <Text style={styles.suspendText}>Reject</Text>
+                </Pressable>
+              </View>
+            </View>
+          ))
+        )}
+
+        {/* Deposit releases */}
+        <Text style={styles.sectionTitle}>Deposit releases 💷</Text>
+        <View style={styles.feeRow}>
+          <Text style={styles.feeLabel}>Platform commission</Text>
+          <TextInput
+            testID="fee-input"
+            style={styles.feeInput}
+            value={feePercent}
+            onChangeText={setFeePercent}
+            keyboardType="numeric"
+          />
+          <Text style={styles.feePct}>%</Text>
+          <Pressable testID="save-fee" style={styles.feeSave} onPress={saveFee}>
+            <Text style={styles.feeSaveText}>Save</Text>
+          </Pressable>
+        </View>
+        {!connectEnabled && (
+          <Text style={styles.connectNote}>⚠️ Add a real Stripe test key (STRIPE_CONNECT_SECRET_KEY) to enable contractor onboarding & payouts.</Text>
+        )}
+        {releases.length === 0 ? (
+          <Text style={styles.empty}>No deposits awaiting release</Text>
+        ) : (
+          releases.map((r) => (
+            <View key={r.contract_id} style={styles.reportCard} testID={`release-${r.contract_id}`}>
+              <View style={styles.reportTop}>
+                <Text style={styles.reportName}>{r.project_title || "Garden project"}</Text>
+                <Text style={styles.releaseAmt}>£{r.deposit_amount}</Text>
+              </View>
+              <Text style={styles.reportMeta}>{r.customer_name} → {r.contractor_name} · job {r.job_status}</Text>
+              <Text style={styles.reportMeta}>Net to contractor £{r.net_to_contractor} (fee £{r.platform_fee})</Text>
+              {!r.payouts_enabled && <Text style={styles.connectNote}>Contractor payouts not set up yet.</Text>}
+              <Pressable
+                testID={`release-btn-${r.contract_id}`}
+                style={[styles.actionBtn, styles.clearBtn, { alignSelf: "flex-start", opacity: (!r.payouts_enabled || releaseBusy === r.contract_id) ? 0.5 : 1 }]}
+                disabled={!r.payouts_enabled || releaseBusy === r.contract_id}
+                onPress={() => releaseFunds(r.contract_id)}
+              >
+                {releaseBusy === r.contract_id ? <ActivityIndicator size="small" color={colors.brand} /> : (<><Feather name="send" size={13} color={colors.brand} /><Text style={styles.clearText}>Release funds</Text></>)}
+              </Pressable>
+            </View>
+          ))
+        )}
 
         {/* Reports */}
         <Text style={styles.sectionTitle}>Member reports 🚩</Text>
@@ -348,6 +455,14 @@ const styles = StyleSheet.create({
   projOwner: { fontFamily: fonts.text, color: colors.muted, fontSize: 12 },
   projMeta: { fontFamily: fonts.text, color: colors.brand, fontSize: 12, fontWeight: "600" },
   empty: { fontFamily: fonts.text, color: colors.muted },
+  feeRow: { flexDirection: "row", alignItems: "center", gap: spacing.sm, backgroundColor: colors.surfaceSecondary, borderRadius: radius.md, borderWidth: 1, borderColor: colors.border, padding: spacing.md },
+  feeLabel: { flex: 1, fontFamily: fonts.text, fontWeight: "700", color: colors.onSurface, fontSize: 14 },
+  feeInput: { width: 60, backgroundColor: colors.surface, borderRadius: radius.sm, borderWidth: 1, borderColor: colors.border, paddingHorizontal: spacing.sm, paddingVertical: 6, fontFamily: fonts.text, fontSize: 15, color: colors.onSurface, textAlign: "center" },
+  feePct: { fontFamily: fonts.text, fontWeight: "700", color: colors.muted },
+  feeSave: { backgroundColor: colors.brand, paddingHorizontal: spacing.md, paddingVertical: 8, borderRadius: radius.sm },
+  feeSaveText: { color: "#fff", fontFamily: fonts.text, fontWeight: "700", fontSize: 13 },
+  connectNote: { fontFamily: fonts.text, color: colors.error, fontSize: 12, lineHeight: 17 },
+  releaseAmt: { fontFamily: fonts.display, color: colors.brand, fontSize: 16 },
   pollCard: { flexDirection: "row", alignItems: "center", gap: spacing.md, backgroundColor: colors.surfaceSecondary, borderRadius: radius.md, padding: spacing.lg, borderWidth: 1, borderColor: colors.border },
   pollActive: { borderColor: colors.brand, backgroundColor: "#EFF4EE" },
   pollQ: { fontFamily: fonts.text, fontWeight: "700", color: colors.onSurface, fontSize: 14 },

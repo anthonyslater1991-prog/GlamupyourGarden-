@@ -1,0 +1,29 @@
+{
+  "summary": "Iteration 9 tested v8 features: contractor claim + admin approval, contract PDF, Stripe deposit payments, review reminders. Backend: 19/19 pytest cases passed (test_v8_features.py) covering claim state machine, my-contractor, /admin/claims + approve action, PUT profile access control, PDF (application/pdf + %PDF header + ?token= support + 401 unauth), deposit session creation (£720 = 30% of £2400, url starts with https://checkout.stripe.com/), /payments/status polling, /reminders + /dismiss-review, and contractor review reply. Frontend (Playwright, mobile 390x844): fresh contractor signup with role=contractor OK; profile-contractor-hub link visible; admin login + admin dashboard + profile-admin link visible; Home 'review-reminder' banner rendered for garden_test; Projects tab 'open-agreements' row shows '2 to review' badge; contract detail page shows both download-pdf and pay-deposit buttons for active signed contract; tapping pay-deposit successfully redirects to Stripe Checkout (cs_test_...) with deferred_intent[amount]=72000 gbp (=£720.00). Overall PASS.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [],
+    "react_native_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_v8_features.py",
+    "/app/test_reports/pytest/v8_results.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "server.py contract_pdf accepts token via Query or Authorization header — good for expo web Linking.openURL usage where headers can't be attached.",
+    "start_deposit correctly gates on _fully_signed + numeric price; deposit_session_id persisted on contract; /payments/status is idempotent (only sets deposit_paid once). Solid.",
+    "ContractorProfileUpdate schema only exposes tagline/phone/location/postcode/services/coverage_miles — no 'about'/'bio' field. If the Hub UI advertises editing a bio, update the schema; current PUT silently drops unknown fields."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_v8_features.py (new)"
+  ],
+  "success_rate": {"backend": "100% (19/19)", "frontend": "100% on the flows exercised"},
+  "seed_data_creation": "Created fresh contractor accounts (email testcontractor_<ts>@example.com, role=contractor) via /api/auth/register, plus test contracts on the claimed listing (TEST_v8 prefix). No prod data modified.",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "All 4 v8 features verified end-to-end. Stripe test-mode deposit reaches Checkout with correct GBP amount; return-flow (?deposit=success&session_id=) is handled by /api/payments/status which flips deposit_paid=true — this was not driven through the Stripe Checkout UI in Playwright (blocked by 3rd-party) but was verified via /api/payments/status endpoint response shape. If needed, a follow-up run can simulate the redirect by manually invoking /api/payments/status/{session_id} after paying via a headed Stripe test session.",
+  "rca_of_issue": "N/A — no bugs found."
+}

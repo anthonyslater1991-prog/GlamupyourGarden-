@@ -1,0 +1,39 @@
+{
+  "summary": "V9 QUOTE flow tested end-to-end. Backend pytest (test_v9_quote.py): 10/10 PASSED — customer 403 on submit; deposit 400 before accept ('accept the contractor's quote' message); admin submits Materials £900 + Labour £1500 → quote_status=proposed, quote_amount=2400, price='£2,400', quote_note persisted; customer decline → status=declined and deposit still 400; admin can re-submit after decline (Update quote path); admin/contractor cannot accept own quote (403); customer accept → status=accepted + quote_decided_at set; deposit POST after accept returns https://checkout.stripe.com/... URL with amount=720.0 (30% of £2400); GET contract confirms full persistence. Frontend Playwright (mobile 390x844) on fresh contract contract_065a458a9745: (1) Customer view pre-quote: submit-quote-btn hidden, no accept/decline, pay-deposit hidden — role & deposit gating correct. (2) Admin view: submit-quote-btn visible, accept-quote hidden; opened send-quote modal, filled quote-label-0/1 + quote-amount-0/1 (Materials 900, Labour 1500), live total updated to £2,400; send-quote submitted → 'Awaiting response' pill + 'Update quote' button appear. (3) Customer view of proposed quote: decline-quote & accept-quote visible; submit-quote-btn hidden; pay-deposit still hidden. Declined → 'Declined' pill shown. (4) Admin re-quotes via 'Update quote' button (icon+'Update quote' label) — modal reopens with prefilled items, send-quote works. (5) Customer accepts → 'Accepted' pill + pay-deposit button appears. (6) pay-deposit tap redirects to checkout.stripe.com/c/pay/cs_test_... — Stripe Checkout reached. All role gating, quote total math, price update, and deposit unlock verified through the real UI + backend. No mocks. Overall PASS.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [],
+    "react_native_issues": [
+      {"component": "shadow* style props (deprecated in RN Web)", "issue": "Console warns: '\"shadow*\" style props are deprecated. Use \"boxShadow\".' repeatedly during navigation. Non-blocking on web but noisy; consider migrating to boxShadow in shared styles. Reference: components/screens using shadowColor/shadowOffset/shadowOpacity/shadowRadius."},
+      {"component": "props.pointerEvents (deprecated)", "issue": "Console warns: 'props.pointerEvents is deprecated. Use style.pointerEvents' — comes from an RN component (likely Modal/Overlay). Non-blocking. Reference: frontend/app/contract/[id].tsx modal usage or upstream lib."},
+      {"component": "Animated useNativeDriver on web", "issue": "Warning 'useNativeDriver is not supported because the native animated module is missing'. Expected on RN Web fallback; only cosmetic — no action required for web preview."}
+    ]
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_v9_quote.py",
+    "/app/test_reports/pytest/v9_results.xml"
+  ],
+  "action_items": [
+    "Optional: silence RN-web deprecation warnings by migrating shadow* props to boxShadow and moving pointerEvents into style.",
+    "Consider adding a testID on the Quote-card status pill (e.g. 'quote-status') to make status assertions less brittle than text matching."
+  ],
+  "critical_code_review_comments": [
+    "server.py submit_quote: total is recomputed from items when body.amount is None; edge case 'items present but body.amount=0' returns 400 (good). Line-item labels are trimmed and empty labels dropped — solid input hygiene.",
+    "server.py respond_quote correctly rejects when quote_status != 'proposed' (400) so accept/decline is idempotent-safe.",
+    "server.py _deposit_ready returns quote_status=='accepted' OR fully_signed (legacy). Matches product intent that quote acceptance is the new gate while preserving pre-quote contracts.",
+    "server.py submit_quote also sets contract price = _fmt_price(total) so the 'Total price' field on the contract card stays in sync — good. However quote submission does NOT reset customer_signed/contractor_signed if either had signed before a re-quote; not a bug for this feature but worth confirming with product.",
+    "frontend contract/[id].tsx: depositReady = quote_status==='accepted' || fullySigned. Matches backend gate. amProSide correctly hides accept/decline for contractor/admin and hides submit-quote for customer.",
+    "frontend send-quote modal has KeyboardAvoidingView? Verify TextInput focus on small viewports — not tested in this iteration but appeared functional."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_v9_quote.py (new)"
+  ],
+  "success_rate": {"backend": "100% (10/10)", "frontend": "100% on 6 UI phases exercised"},
+  "seed_data_creation": "Created fresh customer-drafted contract contract_065a458a9745 (scope 'TEST_v9_ui quote flow') on contractor con_b30ed2c5a59d via POST /api/contracts as garden_test@example.com. Test data left in place (Accepted + Stripe session started but not paid).",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "Quote flow (submit → accept/decline → deposit unlock) is fully working end-to-end. Both role gating directions were verified in-UI. Stripe redirect reached checkout.stripe.com with cs_test_ session; actual Stripe card entry not driven (3rd-party UI) but /api/payments/status flow was covered in iteration 9. Only cosmetic RN-web console warnings remain (shadow*, pointerEvents) — no functional issues.",
+  "rca_of_issue": "N/A — no bugs found."
+}

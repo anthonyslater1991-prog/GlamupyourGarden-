@@ -1,0 +1,40 @@
+{
+  "summary": "V10 Stripe Connect payouts — graceful 503 behaviour tested end-to-end. Backend pytest (test_v10_payouts.py): 13/13 PASSED — /admin/settings GET returns {platform_fee_percent:10, connect_enabled:false}; POST persists new value (verified 15 via GET), clamps to [0..50], and requires admin (customer=403); /admin/releases returns {releases:[], fee_percent, connect_enabled:false} with correct row shape when populated; /connect/status for a claimless contractor returns connected/onboarded/payouts_enabled=false; /connect/onboard returns 503 with friendly detail 'Contractor payouts need a real Stripe test key…' for both un-claimed contractors and customers; unauth call is 401/403; /admin/contracts/{id}/release also fails-fast with 503 (guard before 404). Full claim→approve regression: fresh contractor registered → claimed listing con_test_v10_557331 → admin approved via POST /admin/claims/{id}/action → GET /my-contractor now returns that listing → /connect/status still payouts_enabled=false → /connect/onboard still 503 (correct). Frontend Playwright (mobile 390x844): (1) Admin dashboard renders /admin section 'Deposit releases' with fee-input (current 10%), yellow connect-note ('Add a real Stripe test key…'), 'No deposits awaiting release' empty-state — no crash. Changed fee to 15 via fee-input+save-fee → toast 'Commission set to 15%'; reload confirmed the input showed 15 (persistence verified in UI). Restored to 10. (2) Fresh contractor account registered → Hub shows the new unclaimed listing card with testID claim-con_test_v10ui_f0d5de → tapped claim → Hub switches to 'Claim pending'. (3) Admin logged back in → approve-claim-con_test_v10ui_f0d5de visible → tapped → toast 'Claim approved ✅' and claim removed from list. (4) Contractor logged back in → Contractor Hub now shows the owned listing plus a Payouts card with testID connect-payouts button labelled 'Set up payouts'. Tapping it produced a friendly toast: 'Contractor payouts need a real Stripe test key. Add STRIPE_CONNECT_SECRET_KEY (sk_test_...) to enable Connect onboarding & transfers.' The Hub did NOT crash (hub-back and other UI still visible). Console shows the expected 503 response. All acceptance criteria met.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [],
+    "react_native_issues": [
+      {"component": "shadow* style props (RN Web deprecation)", "issue": "Console warns repeatedly: '\"shadow*\" style props are deprecated. Use \"boxShadow\".' Non-blocking cosmetic warning on web. Reference: shared styles across screens."},
+      {"component": "props.pointerEvents (RN Web deprecation)", "issue": "Console warns: 'props.pointerEvents is deprecated. Use style.pointerEvents' during modal/overlay usage. Non-blocking. Reference: Toast/Modal usage."},
+      {"component": "Animated useNativeDriver on web", "issue": "'useNativeDriver is not supported because the native animated module is missing' — expected on RN Web; no action needed."}
+    ]
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_v10_payouts.py",
+    "/app/test_reports/pytest/v10_results.xml"
+  ],
+  "action_items": [
+    "Optional: silence RN-web deprecation warnings by migrating shadow* → boxShadow and moving pointerEvents into style.",
+    "Optional: order-of-checks — /admin/contracts/{id}/release calls _connect_guard() BEFORE checking if the contract exists, so a bad contract_id returns 503 instead of 404. Not user-facing today (button is disabled without payouts_enabled) but worth swapping order for cleaner semantics when Stripe key is set.",
+    "Optional: the /connect/onboard guard fires before the 'must own a listing' 403; when Stripe key is later added, a customer or claimless contractor will get a misleading 403 only after passing the guard — current order is fine, just note it."
+  ],
+  "critical_code_review_comments": [
+    "server.py _connect_guard() returns a clear 503 with actionable message — matches the product intent (graceful fallback). Good.",
+    "server.py list_releases enriches each row with payouts_enabled + has_stripe_account from the contractor doc — this is what the UI uses to disable release-btn. Correct.",
+    "server.py set_settings clamps to [0,50] (max fee 50%). Sensible upper bound.",
+    "admin/index.tsx releaseFunds() posts empty body {} → backend falls back to server-side fee (correct); server also allows overriding fee_percent per-release (nice flexibility, though no UI exposes it).",
+    "contractor-hub/index.tsx startOnboard: on 503 the api throws with detail message and Toast shows it. connectBusy is cleared in the catch — good, no stuck spinner. However on success the code sets window.location.href but never clears connectBusy — non-issue since navigation happens, but a leftover state on 'back'; minor.",
+    "Data model: releases list is filtered by deposit_paid && !released — matches the intent to only show payable deposits. Any V9 accepted-quote+paid-deposit contract will surface here for release."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_v10_payouts.py (new)"
+  ],
+  "success_rate": {"backend": "100% (13/13)", "frontend": "100% on 4 UI phases (admin fee CRUD, admin releases empty-state + connect-note, claim→approve regression, contractor payouts card 503 toast + no-crash)"},
+  "seed_data_creation": "Created two fresh unclaimed contractor listings via DB (con_test_v10_557331 for backend claim test, con_test_v10ui_f0d5de for UI claim test) — both deleted post-test. Registered two fresh contractor users (test_conui_*) via /api/auth/register — left in DB (used TEST_ prefix per convention).",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "V10 Connect payouts flow is production-shape ready modulo the missing STRIPE_CONNECT_SECRET_KEY. Every 503 path is friendly and non-crashing. To fully exercise real Stripe onboarding/transfers, set STRIPE_CONNECT_SECRET_KEY=sk_test_... in backend/.env; existing tests will still pass and the guard will step aside, unblocking /connect/onboard, /connect/status account.retrieve, and /admin/contracts/{id}/release Transfer.create. No new bugs found. All earlier iterations (quote flow, contracts, reviews, admin, messaging) continue to work — no regressions detected in admin dashboard (counters/reports/polls/claims still render).",
+  "rca_of_issue": "N/A — feature verified working as designed. The 503 on /connect/onboard and /admin/contracts/{id}/release is intentional (STRIPE_CONNECT_SECRET_KEY not set in this env) and surfaces as a friendly Toast in the contractor Hub."
+}

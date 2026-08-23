@@ -180,3 +180,83 @@
 ## agent_communication:
 ##     -agent: "main"
 ##     -message: "Iteration 7: Please FRONTEND-test (1) Reviews with photos on a contractor profile — a review with photos already exists via API on the first contractor; verify thumbnails render and tapping opens the zoom viewer, and that posting a normal text review still works (photo picker itself may not be automatable on web, that's OK). (2) Legal pages open from Profile > Legal & Safety (terms/privacy/safety) and render content with working back button. Also quick-confirm the EXISTING admin counters (stat-now/stat-users-5m/stat-1h/stat-24h on /admin) and home social links (social-fb/ig/tt/yt) + QR share (share-qr on Profile) still work. Creds: customer garden_test@example.com/secret123, admin admin@glamgarden.app/GlamAdmin2026!"
+
+## --- Iteration 8: Contractor Accounts + Contract PDF + Deposit (Stripe) + Review Reminders ---
+## backend:
+##   - task: "Contractor accounts (claim -> admin approve, my-contractor, profile edit, review reply)"
+##     implemented: true
+##     working: true
+##     file: "backend/server.py"
+##     needs_retesting: false
+##     status_history:
+##         -working: true
+##         -agent: "main"
+##         -comment: "POST /contractors/{id}/claim (contractor role, sets pending), GET /admin/claims, POST /admin/claims/{id}/action approve|reject, GET /my-contractor (renamed to avoid /contractors/{id} shadow), PUT /contractors/{id}/profile (owner/admin only), POST /contractors/{id}/reviews/{rid}/reply (owner/admin). Contract access now scoped: contractor sees only owned listings' contracts. Curl-verified incl 403 for non-owner."
+##   - task: "Contract PDF (reportlab)"
+##     implemented: true
+##     working: true
+##     file: "backend/server.py"
+##     needs_retesting: false
+##     status_history:
+##         -working: true
+##         -agent: "main"
+##         -comment: "GET /contracts/{id}/pdf?token=... streams application/pdf with all terms, 9 clauses, signatures+dates. Curl returned 200 application/pdf 4281 bytes."
+##   - task: "Deposit payments (Stripe test mode via emergentintegrations)"
+##     implemented: true
+##     working: true
+##     file: "backend/server.py"
+##     needs_retesting: false
+##     status_history:
+##         -working: true
+##         -agent: "main"
+##         -comment: "POST /contracts/{id}/deposit (customer, fully-signed, numeric price) computes deposit=price*pct, creates Stripe Checkout Session (GBP), stores payment_transactions, returns url+session_id. GET /payments/status/{session_id} polls Stripe, marks contract deposit_paid once. STRIPE_API_KEY added to backend/.env. Curl-verified: £720 for £2400@30%, session created, status unpaid/open pre-payment."
+##   - task: "Review reminders (completed jobs need review)"
+##     implemented: true
+##     working: true
+##     file: "backend/server.py"
+##     needs_retesting: false
+##     status_history:
+##         -working: true
+##         -agent: "main"
+##         -comment: "GET /reminders returns customer's completed+unreviewed+undismissed contracts. add_review with contract_id marks that contract reviewed. POST /contracts/{id}/dismiss-review. Curl-verified count drops after review."
+## frontend:
+##   - task: "Contractor Hub + admin Claims + Contract PDF/Deposit UI + Review reminder banners"
+##     implemented: true
+##     working: "NA"
+##     file: "frontend/app/contractor-hub/index.tsx, frontend/app/admin/index.tsx, frontend/app/contract/[id].tsx, frontend/app/(tabs)/index.tsx, frontend/app/(tabs)/projects.tsx, frontend/app/(tabs)/profile.tsx, frontend/app/contractor/[id].tsx"
+##     needs_retesting: true
+##     status_history:
+##         -working: "NA"
+##         -agent: "main"
+##         -comment: "Profile>Contractor>Contractor Hub (testID profile-contractor-hub). Hub: claim listing (claim-{id}), pending state, edit-profile/save-profile, reply-{rid}/send-reply, hub-agreements. Admin dashboard: claim-{id} with approve-claim-{id}/reject-claim-{id}. Contract screen: pay-deposit (customer, fully signed, opens Stripe Checkout; returns via ?deposit=success&session_id=), download-pdf (opens PDF). Home: review-reminder banner. Projects tab: 'to review' badge on open-agreements. Contractor detail auto-opens review modal via ?review=1&contract_id=."
+
+## agent_communication:
+##     -agent: "main"
+##     -message: "Iteration 8 — please test BOTH. Backend already curl-verified. Focus frontend E2E: (1) Contractor flow: register a NEW contractor account (role contractor) -> Profile > Contractor Hub -> claim a listing -> login admin -> Admin Dashboard shows the claim -> approve -> back as contractor: Hub now shows the listing, edit profile works, reply to a review works. (2) Deposit: as customer garden_test, on a FULLY-SIGNED contract with a numeric price (create one, sign as customer, sign contractor side as admin), tap pay-deposit -> Stripe Checkout opens (test card 4242 4242 4242 4242, any future expiry, any CVC) -> completes -> returns to app -> deposit shows paid. (3) download-pdf opens a PDF. (4) Review reminders: complete a job (admin advances stages to last) then as customer see review-reminder banner on Home + 'to review' badge on Projects; tapping opens the review modal. Creds: customer garden_test@example.com/secret123, admin admin@glamgarden.app/GlamAdmin2026!. Stripe is TEST mode; NOTE deposit marks paid via /payments/status polling on return (no webhook)."
+
+## --- Iteration 9: Stripe Connect (payout onboarding + admin release + commission) ---
+## Context: Deposit escrow-style model — customer deposit held on platform balance, admin manually releases to contractor's connected account minus a configurable % commission. Built with raw stripe lib, ACTIVATED only when a real Stripe test key (STRIPE_CONNECT_SECRET_KEY=sk_test_...) is set; otherwise gracefully guarded (503). Built-in sk_test_emergent only supports Checkout.
+## backend:
+##   - task: "Connect onboarding + status, admin settings(commission), releases list, release transfer"
+##     implemented: true
+##     working: true
+##     file: "backend/server.py"
+##     needs_retesting: false
+##     status_history:
+##         -working: true
+##         -agent: "main"
+##         -comment: "POST /connect/onboard & GET /connect/status (Express account + AccountLink; 503 without real key). GET/POST /admin/settings (platform_fee_percent, clamp 0-50). GET /admin/releases (deposit_paid && !released contracts + fee math + payout eligibility). POST /admin/contracts/{id}/release (Transfer net=deposit-fee to connected acct; requires payouts_enabled; idempotent). Deposit checkout + status now branch to raw stripe when real key present (transfer_group + source_transaction via latest_charge). Curl-verified guards: settings get/set 12%, releases connect_enabled=false, onboard 503."
+## frontend:
+##   - task: "Contractor Hub payouts card + Admin releases & commission UI"
+##     implemented: true
+##     working: "NA"
+##     file: "frontend/app/contractor-hub/index.tsx, frontend/app/admin/index.tsx"
+##     needs_retesting: true
+##     status_history:
+##         -working: "NA"
+##         -agent: "main"
+##         -comment: "Hub: Payouts card with connect-payouts button (opens onboarding; without real key shows the 503 message via toast). Admin: 'Deposit releases' section with fee-input + save-fee (commission %), release list cards (release-{id}) with release-btn-{id} (disabled when payouts not enabled), and a connect-note warning when Connect isn't enabled."
+
+## agent_communication:
+##     -agent: "main"
+##     -message: "Iteration 9 (Stripe Connect). NOTE: full payouts need a real Stripe test key which is NOT set in this env, so onboarding/transfers intentionally return 503 with a helpful message. Please verify the GRACEFUL behaviour + UI: (1) Admin dashboard > Deposit releases: fee-input shows current %, changing it and save-fee persists (toast) — verify GET/POST /admin/settings. (2) Admin releases list renders (likely 'No deposits awaiting release' or items with a disabled release button + 'Contractor payouts not set up' note) and a yellow connect-note warning about the missing key. (3) Contractor Hub (register a contractor, claim+admin-approve a listing, back as contractor): Payouts card shows a 'Set up payouts' button (connect-payouts); tapping it surfaces the friendly 'needs a real Stripe test key' error toast (503), NOT a crash. Do NOT attempt real Stripe onboarding/transfers. Creds: customer garden_test@example.com/secret123, admin admin@glamgarden.app/GlamAdmin2026!."

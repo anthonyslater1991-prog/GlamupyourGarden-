@@ -75,6 +75,18 @@ Garden makeover app: users photograph their garden, choose changes, and generate
 - Confirmed existing admin visit/active counters (now/5m/1h/24h), home social links (FB/IG/TT/YT), and QR share all working
 - Verified: frontend E2E passed (iteration 7); reviews-with-photos backend curl-verified
 
+## Implemented (2026-06 fork) — iteration 8: Contractor Accounts + PDF + Deposit + Review Reminders
+- Contractor accounts: contractor signs up, claims a directory listing, admin approves (Admin > Contractor claims); claimed contractor manages profile, sees only their agreements, replies to reviews (Contractor Hub)
+- Contract PDF: downloadable dated agreement (terms, 9 clauses, signatures) via /contracts/{id}/pdf
+- Deposit payments: customer pays the % deposit via Stripe Checkout (test) after unlock
+- Review reminders: completed jobs nudge the customer — Home banner + Projects "to review" badge + auto-open review on contractor page
+- Verified: backend curl + frontend E2E passed (iteration 8)
+
+## Implemented (2026-06 fork) — iteration 9: Quote flow + Stripe Connect payouts
+- Quote flow: contractor submits a quote (line items + note + total) on the agreement; customer Accepts/Declines; deposit unlocks as soon as the quote is ACCEPTED (price auto-set to quote total). Verified 10/10 backend + frontend.
+- Stripe Connect (escrow-style payouts): contractor onboards an Express payout account (Contractor Hub > Payouts); customer deposit held on platform balance; ADMIN manually releases funds to the contractor minus a configurable % commission (Admin > Deposit releases). Built with raw stripe lib; ACTIVATES when a real Stripe test key STRIPE_CONNECT_SECRET_KEY=sk_test_... is added to backend/.env — otherwise gracefully returns 503 with guidance. Verified 13/13 backend + frontend (graceful guards).
+- NOTE: built-in sk_test_emergent only supports Checkout, not Connect. To test real payouts, add your own Stripe test secret key as STRIPE_CONNECT_SECRET_KEY.
+
 ## Backlog
 ### P1
 - Real member-to-member messaging + community chat room (opt-out aware)
