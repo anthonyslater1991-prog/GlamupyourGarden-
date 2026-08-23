@@ -16,13 +16,24 @@ export type User = {
   picture?: string | null;
   bio?: string;
   allow_messages?: boolean;
+  phone?: string;
+  address?: string;
+  postcode?: string;
 };
 
 type AuthContextType = {
   user: User | null;
   loading: boolean;
   login: (email: string, password: string) => Promise<void>;
-  register: (name: string, email: string, password: string, role: string) => Promise<void>;
+  register: (payload: {
+    name: string;
+    email: string;
+    password: string;
+    role: string;
+    phone?: string;
+    address?: string;
+    postcode?: string;
+  }) => Promise<void>;
   googleLogin: () => Promise<void>;
   logout: () => Promise<void>;
   refresh: () => Promise<void>;
@@ -116,15 +127,18 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     setUser(data.user);
   }, []);
 
-  const register = useCallback(async (name: string, email: string, password: string, role: string) => {
-    const data = await apiFetch<{ session_token: string; user: User }>("/auth/register", {
-      method: "POST",
-      body: { name, email, password, role },
-      auth: false,
-    });
-    await saveToken(data.session_token);
-    setUser(data.user);
-  }, []);
+  const register = useCallback(
+    async (payload: { name: string; email: string; password: string; role: string; phone?: string; address?: string; postcode?: string }) => {
+      const data = await apiFetch<{ session_token: string; user: User }>("/auth/register", {
+        method: "POST",
+        body: payload,
+        auth: false,
+      });
+      await saveToken(data.session_token);
+      setUser(data.user);
+    },
+    []
+  );
 
   const googleLogin = useCallback(async () => {
     const redirectUrl =

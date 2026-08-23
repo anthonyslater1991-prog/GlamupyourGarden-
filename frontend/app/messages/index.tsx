@@ -5,7 +5,8 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { Feather } from "@expo/vector-icons";
 import { useRouter, useFocusEffect } from "expo-router";
 import { apiFetch } from "@/src/lib/api";
-import { colors, spacing, radius, fonts } from "@/src/theme";
+import { useUnread } from "@/src/context/UnreadContext";
+import { colors, spacing, fonts } from "@/src/theme";
 
 type Conv = { other_id: string; name: string; picture?: string; last_text: string; last_at: string; unread: number };
 type Member = { user_id: string; name: string; picture?: string; role: string; allow_messages: boolean };
@@ -25,6 +26,7 @@ function Avatar({ name, picture, size = 48 }: { name?: string; picture?: string;
 export default function Messages() {
   const insets = useSafeAreaInsets();
   const router = useRouter();
+  const unread = useUnread();
   const [convs, setConvs] = useState<Conv[]>([]);
   const [members, setMembers] = useState<Member[]>([]);
   const [refreshing, setRefreshing] = useState(false);
@@ -35,6 +37,7 @@ export default function Messages() {
       setConvs(c.conversations);
       const m = await apiFetch<{ members: Member[] }>("/members");
       setMembers(m.members);
+      unread.refresh();
     } catch {}
   }, []);
 

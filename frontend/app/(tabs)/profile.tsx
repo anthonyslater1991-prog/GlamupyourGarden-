@@ -34,6 +34,9 @@ export default function Profile() {
   const [qrOpen, setQrOpen] = useState(false);
   const [bioOpen, setBioOpen] = useState(false);
   const [bio, setBio] = useState(user?.bio || "");
+  const [phone, setPhone] = useState(user?.phone || "");
+  const [postcode, setPostcode] = useState(user?.postcode || "");
+  const [address, setAddress] = useState(user?.address || "");
   const [saving, setSaving] = useState(false);
 
   const toggleMessages = async (v: boolean) => {
@@ -47,7 +50,10 @@ export default function Profile() {
   const saveBio = async () => {
     setSaving(true);
     try {
-      const r = await apiFetch<{ user: any }>("/auth/profile", { method: "PUT", body: { bio } });
+      const r = await apiFetch<{ user: any }>("/auth/profile", {
+        method: "PUT",
+        body: { bio, phone, postcode, address },
+      });
       setUser(r.user);
       setBioOpen(false);
       toast.show("Profile updated 🌿", "success");
@@ -81,10 +87,26 @@ export default function Profile() {
             <Text style={styles.tierText}>Free Member · {user?.role === "contractor" ? "Contractor" : "Garden Owner"}</Text>
           </View>
           {!!user?.bio && <Text style={styles.bioText}>{user.bio}</Text>}
+          {(!!user?.postcode || !!user?.phone) && (
+            <View style={styles.detailChips}>
+              {!!user?.postcode && (
+                <View style={styles.detailChip}>
+                  <Feather name="map-pin" size={12} color={colors.brand} />
+                  <Text style={styles.detailChipText}>{user.postcode}</Text>
+                </View>
+              )}
+              {!!user?.phone && (
+                <View style={styles.detailChip}>
+                  <Feather name="phone" size={12} color={colors.brand} />
+                  <Text style={styles.detailChipText}>{user.phone}</Text>
+                </View>
+              )}
+            </View>
+          )}
         </View>
 
         <View style={styles.section}>
-          <Row icon="edit-2" label="Edit bio" onPress={() => setBioOpen(true)} testID="edit-bio" />
+          <Row icon="edit-2" label="Edit my details" onPress={() => setBioOpen(true)} testID="edit-bio" />
           <Row icon="share-2" label="Share app (QR code)" onPress={() => setQrOpen(true)} testID="share-qr" />
           <View style={styles.row}>
             <View style={styles.rowLeft}>
@@ -156,7 +178,7 @@ export default function Profile() {
           <Pressable style={styles.modalBackdrop} onPress={() => setBioOpen(false)} />
           <View style={[styles.sheet, { paddingBottom: insets.bottom + spacing.lg }]}>
             <View style={styles.sheetHandle} />
-            <Text style={styles.qrTitle}>Edit bio</Text>
+            <Text style={styles.qrTitle}>Edit my details</Text>
             <TextInput
               testID="bio-input"
               style={styles.bioInput}
@@ -165,6 +187,32 @@ export default function Profile() {
               value={bio}
               onChangeText={setBio}
               multiline
+            />
+            <TextInput
+              testID="phone-input"
+              style={styles.lineInput}
+              placeholder="Phone number"
+              placeholderTextColor={colors.muted}
+              keyboardType="phone-pad"
+              value={phone}
+              onChangeText={setPhone}
+            />
+            <TextInput
+              testID="postcode-input"
+              style={styles.lineInput}
+              placeholder="Postcode"
+              placeholderTextColor={colors.muted}
+              autoCapitalize="characters"
+              value={postcode}
+              onChangeText={setPostcode}
+            />
+            <TextInput
+              testID="address-input"
+              style={styles.lineInput}
+              placeholder="Address"
+              placeholderTextColor={colors.muted}
+              value={address}
+              onChangeText={setAddress}
             />
             <Pressable testID="save-bio-button" style={styles.copyBtn} onPress={saveBio} disabled={saving}>
               {saving ? <ActivityIndicator color="#fff" /> : <Text style={styles.copyText}>Save</Text>}
@@ -230,4 +278,8 @@ const styles = StyleSheet.create({
   sheet: { backgroundColor: colors.surfaceSecondary, borderTopLeftRadius: radius.lg, borderTopRightRadius: radius.lg, padding: spacing.xl, gap: spacing.md },
   sheetHandle: { width: 44, height: 5, borderRadius: 3, backgroundColor: colors.border, alignSelf: "center" },
   bioInput: { minHeight: 90, backgroundColor: colors.surface, borderRadius: radius.md, borderWidth: 1, borderColor: colors.border, padding: spacing.lg, fontFamily: fonts.text, fontSize: 15, color: colors.onSurface, textAlignVertical: "top" },
+  lineInput: { height: 50, backgroundColor: colors.surface, borderRadius: radius.md, borderWidth: 1, borderColor: colors.border, paddingHorizontal: spacing.lg, fontFamily: fonts.text, fontSize: 15, color: colors.onSurface },
+  detailChips: { flexDirection: "row", gap: spacing.sm, marginTop: spacing.md, flexWrap: "wrap", justifyContent: "center" },
+  detailChip: { flexDirection: "row", alignItems: "center", gap: 5, backgroundColor: "#EFF4EE", paddingVertical: 6, paddingHorizontal: spacing.md, borderRadius: radius.pill },
+  detailChipText: { fontFamily: fonts.text, fontWeight: "700", color: colors.brand, fontSize: 12 },
 });

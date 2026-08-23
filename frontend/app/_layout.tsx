@@ -10,6 +10,7 @@ import { useFonts } from "expo-font";
 
 import { useIconFonts } from "@/src/hooks/use-icon-fonts";
 import { AuthProvider } from "@/src/context/AuthContext";
+import { UnreadProvider } from "@/src/context/UnreadContext";
 import { ToastProvider } from "@/src/components/Toast";
 
 // Disable logbox errors etc so that users can see the app
@@ -48,9 +49,11 @@ export default function RootLayout() {
         <BottomSheetModalProvider>
           <ToastProvider>
             <AuthProvider>
+              <UnreadProvider>
               <Stack screenOptions={{ headerShown: false, contentStyle: { backgroundColor: "#F8F9F5" } }}>
                 <Stack.Screen name="chat" options={{ presentation: "modal" }} />
               </Stack>
+              </UnreadProvider>
             </AuthProvider>
           </ToastProvider>
         </BottomSheetModalProvider>

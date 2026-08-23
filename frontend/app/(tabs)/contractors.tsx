@@ -18,6 +18,7 @@ type Contractor = {
   review_count: number;
   location: string;
   image: string;
+  distance_km?: number | null;
 };
 
 function Stars({ rating }: { rating: number }) {
@@ -44,7 +45,7 @@ export default function Contractors() {
 
   const load = useCallback(async () => {
     try {
-      const r = await apiFetch<{ contractors: Contractor[] }>("/contractors");
+      const r = await apiFetch<{ contractors: Contractor[] }>("/map/contractors");
       setItems(r.contractors);
     } catch {}
   }, []);
@@ -54,8 +55,14 @@ export default function Contractors() {
   return (
     <View style={styles.root}>
       <View style={[styles.header, { paddingTop: insets.top + spacing.md }]}>
-        <Text style={styles.title}>Find a Pro 🛠️</Text>
-        <Text style={styles.subtitle}>Trusted local garden contractors</Text>
+        <View style={{ flex: 1 }}>
+          <Text style={styles.title}>Find a Pro 🛠️</Text>
+          <Text style={styles.subtitle}>Trusted local garden contractors</Text>
+        </View>
+        <Pressable testID="open-map" style={styles.mapBtn} onPress={() => router.push("/map")}>
+          <Feather name="map" size={18} color="#fff" />
+          <Text style={styles.mapBtnText}>Map</Text>
+        </Pressable>
       </View>
 
       <FlatList
@@ -93,6 +100,13 @@ export default function Contractors() {
               <View style={styles.locRow}>
                 <Feather name="map-pin" size={12} color={colors.muted} />
                 <Text style={styles.loc}>{item.location}</Text>
+                {item.distance_km != null && (
+                  <View style={[styles.distTag, item.distance_km <= 15 && styles.distTagNear]}>
+                    <Text style={[styles.distTagText, item.distance_km <= 15 && { color: "#fff" }]}>
+                      {item.distance_km <= 15 ? "📍 " : ""}{item.distance_km} km
+                    </Text>
+                  </View>
+                )}
               </View>
             </View>
             <Feather name="chevron-right" size={20} color={colors.muted} />
@@ -106,7 +120,9 @@ export default function Contractors() {
 
 const styles = StyleSheet.create({
   root: { flex: 1, backgroundColor: colors.surface },
-  header: { paddingHorizontal: spacing.lg, paddingBottom: spacing.md },
+  header: { flexDirection: "row", alignItems: "center", paddingHorizontal: spacing.lg, paddingBottom: spacing.md },
+  mapBtn: { flexDirection: "row", alignItems: "center", gap: 5, backgroundColor: colors.brand, paddingVertical: 9, paddingHorizontal: spacing.md, borderRadius: radius.pill },
+  mapBtnText: { color: "#fff", fontFamily: fonts.text, fontWeight: "700", fontSize: 13 },
   title: { fontFamily: fonts.display, fontSize: 28, color: colors.onSurface },
   subtitle: { fontFamily: fonts.text, color: colors.muted, fontSize: 14 },
   card: {
@@ -126,4 +142,7 @@ const styles = StyleSheet.create({
   ratingText: { fontFamily: fonts.text, fontSize: 12, color: colors.onSurfaceTertiary, fontWeight: "600" },
   locRow: { flexDirection: "row", alignItems: "center", gap: 4 },
   loc: { fontFamily: fonts.text, color: colors.muted, fontSize: 12 },
+  distTag: { marginLeft: spacing.sm, backgroundColor: "#EFF4EE", paddingVertical: 2, paddingHorizontal: 8, borderRadius: radius.pill },
+  distTagNear: { backgroundColor: colors.brand },
+  distTagText: { fontFamily: fonts.text, fontWeight: "800", color: colors.brand, fontSize: 11 },
 });

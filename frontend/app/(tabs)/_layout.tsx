@@ -3,10 +3,12 @@ import { useEffect } from "react";
 import { Platform, View, ActivityIndicator, StyleSheet } from "react-native";
 import { Feather } from "@expo/vector-icons";
 import { useAuth } from "@/src/context/AuthContext";
+import { useUnread } from "@/src/context/UnreadContext";
 import { colors, fonts } from "@/src/theme";
 
 export default function TabsLayout() {
   const { user, loading } = useAuth();
+  const { count } = useUnread();
   const router = useRouter();
 
   useEffect(() => {
@@ -56,6 +58,8 @@ export default function TabsLayout() {
         name="community"
         options={{
           title: "Community",
+          tabBarBadge: count > 0 ? count : undefined,
+          tabBarBadgeStyle: { backgroundColor: colors.error, fontSize: 10, fontFamily: fonts.text },
           tabBarIcon: ({ color, size }) => <Feather name="users" size={size} color={color} />,
         }}
       />

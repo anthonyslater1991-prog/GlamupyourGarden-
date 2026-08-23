@@ -1,0 +1,36 @@
+{
+  "summary": "V3 features (unread badge, block/report, photo DMs & rooms, custom polls, address registration, maps + distances) tested end-to-end. Backend: 16/16 new pytest cases PASSED in /app/backend/tests/test_v3_features.py — registration + profile with phone/address/postcode (postcode uppercased), unread flow (send DM -> count rises, open thread -> count drops), photo-only DM/room message accepted, empty text+no image -> 400, block prevents send both ways (403), blocked user hidden from /api/members & /api/conversations, blocked sender's room messages filtered out, unblock restores, /api/report stored & visible in /api/admin/reports, admin-only 403 for customer, custom poll create with activate:true exclusive, delete non-active OK, delete active -> 400, customer forbidden from creating polls, /api/map/contractors returns Manchester (M1) at 0.7km nearest for user with postcode M1 1AE, /api/admin/map returns customers + 4 contractors + map_url. Frontend (mobile viewport 390x844): Signup with new fields (name/email/password/phone/postcode/address) creates account and postcode is uppercased (sw1a 1aa -> SW1A 1AA) and phone visible in Profile. Profile shows M1 1AE + phone chips. Contractors tab: 'Map' button opens /map showing 'Contractors near you' with distance badges (0.7 km, 56.8 km, 113.7 km, 261.9 km) sorted by distance and a graceful 'Map preview unavailable' fallback panel when the external static map is not reachable from the sandbox. Admin Dashboard renders all stat cards (Live activity + Community totals), 'Location Map' link opens /admin/map showing 1 customer (Test Gardener M1 1AE · 4 projects) + 4 contractors (SW1A/M1/B1/LS1) with red/green legend and graceful fallback. DM thread exposes attach button, input, send, and menu (Report + Block); Room thread exposes attach + input + send. Deprecated packages detected: none new. Non-blocking react-native-web warnings persist from v2: 'shadow*' style props (use boxShadow) and props.pointerEvents (use style.pointerEvents).",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [
+      {"screen": "global", "issues": ["Carried over from v2: react-native-web deprecation warnings for 'shadow*' style props and 'props.pointerEvents'. Non-blocking."]},
+      {"screen": "/map & /admin/map", "issues": ["Static map image (staticmap.openstreetmap.de) is not reachable from the preview sandbox (ERR_NAME_NOT_RESOLVED); the graceful 'Map preview unavailable — distances/lists shown below' fallback works correctly, so this is not a defect — noted for context."]}
+    ],
+    "react_native_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_v3_features.py",
+    "/app/backend/tests/test_v2_features.py",
+    "/app/backend/tests/test_backend.py",
+    "/app/test_reports/pytest/v3_results.xml"
+  ],
+  "action_items": [
+    "No blocking issues. Optional polish: (1) suppress shadow*/pointerEvents deprecation warnings by migrating to boxShadow and style.pointerEvents; (2) consider splitting /app/backend/server.py (now 1260 lines) into routers (auth, projects, messaging, admin, maps, ai) — approaching 700-line threshold from code review guidelines; (3) MessageCreate/RoomMessageCreate text still unbounded — recommend a 2000 char cap."
+  ],
+  "critical_code_review_comments": [
+    "server.py grew to 1260 lines — well past the 700-line threshold. High priority to refactor into routers for maintainability.",
+    "In-process _geo_cache in server.py is not shared across workers/replicas and never expires. Fine at current scale, but move to Mongo or Redis for production.",
+    "haversine + static map recomputes on every /map/contractors call because we don't cache /map/contractors output; cheap today but consider a short TTL cache if traffic grows.",
+    "conversations() still loads all a user's DMs to aggregate — noted in v2, still applicable.",
+    "Report model accepts any reason string; consider validating against a fixed list (spam, harassment, inappropriate content, other) matching the UI options."
+  ],
+  "updated_files": ["/app/backend/tests/test_v3_features.py (created)"],
+  "success_rate": {"backend": "100% (16/16 v3 new + 15/15 v2 + 24/24 v1)", "frontend": "100% of tested v3 flows (signup with new fields, profile chips, contractors map + distance badges, /map screen, /admin/map with legend + fallback, admin Location Map link, DM/room attach + menu wiring)"},
+  "seed_data_creation": "Registered TEST_reg_<uuid>@example.com and TEST_ui_<uuid>@example.com via UI signup (all with proper phone/postcode/address). Created and deleted a TEST_ inactive poll via admin API to verify delete on non-active. Created TEST_ report (reason=spam) which now lives in admin reports. All test data is prefixed 'TEST_' for future cleanup.",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "Test creds in /app/memory/test_credentials.md. Run all backend tests: `cd /app/backend && pytest tests/ -v`. Preview sandbox cannot reach staticmap.openstreetmap.de so the map image will always fall back to the graceful panel — that is expected. Manchester contractor (postcode M1) is expected to be ~0.7km from user M1 1AE and shows first in sorted list. Admin project detail modal opens with owner phone/postcode/address — confirmed present via project rows (though a rapid nav cycle caused a 401 in one test session; refresh + retry works).",
+  "rca_of_issue": "N/A — all requested v3 features verified working. No defects found in backend or frontend integration."
+}

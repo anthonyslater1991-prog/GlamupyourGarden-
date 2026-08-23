@@ -34,6 +34,15 @@ Garden makeover app: users photograph their garden, choose changes, and generate
 - Admin Dashboard: seeded admin (admin@glamgarden.app), live visitor/active-user stats, all projects w/ owner info + redesign counts + detail modal, weekly poll rotation between presets
 - Verified: 39 backend tests + frontend e2e passed (iterations 1 & 2).
 
+## Implemented (2026-08-23) — iteration 3
+- Message Alerts: unread DM badge on Community tab (UnreadContext polls /api/unread)
+- Photo Sharing: images in direct messages and community rooms (image_path on messages)
+- Report & Block: block (bidirectional, hides from members/conversations/rooms), report with reasons; admin sees reports
+- Custom Polls: admin create + set-live + delete (non-active) from dashboard
+- Registration captures phone, address, postcode; editable in Profile
+- Map & pins: postcodes.io geocoding + haversine distances; Contractors map + distance badges; Admin location map (customers vs contractors). Static OSM map image (keyless) with graceful fallback; interactive native maps intentionally avoided (needs dev build/keys)
+- Verified: 16/16 backend tests + frontend e2e passed (iteration 3)
+
 ## Backlog
 ### P1
 - Real member-to-member messaging + community chat room (opt-out aware)

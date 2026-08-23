@@ -102,6 +102,9 @@ class RegisterInput(BaseModel):
     email: EmailStr
     password: str
     role: str = "customer"
+    phone: Optional[str] = None
+    address: Optional[str] = None
+    postcode: Optional[str] = None
 
 
 class LoginInput(BaseModel):
@@ -117,6 +120,9 @@ class ProfileUpdate(BaseModel):
     bio: Optional[str] = None
     allow_messages: Optional[bool] = None
     name: Optional[str] = None
+    phone: Optional[str] = None
+    address: Optional[str] = None
+    postcode: Optional[str] = None
 
 
 class ProjectCreate(BaseModel):
@@ -172,6 +178,9 @@ def public_user(u: dict) -> dict:
         "picture": u.get("picture"),
         "bio": u.get("bio", ""),
         "allow_messages": u.get("allow_messages", True),
+        "phone": u.get("phone", ""),
+        "address": u.get("address", ""),
+        "postcode": u.get("postcode", ""),
     }
 
 
@@ -222,6 +231,9 @@ async def register(body: RegisterInput):
         "picture": None,
         "bio": "",
         "allow_messages": True,
+        "phone": body.phone or "",
+        "address": body.address or "",
+        "postcode": (body.postcode or "").upper().strip(),
         "created_at": now_iso(),
     }
     await db.users.insert_one(user)
@@ -279,6 +291,8 @@ async def me(user: dict = Depends(get_current_user)):
 @api_router.put("/auth/profile")
 async def update_profile(body: ProfileUpdate, user: dict = Depends(get_current_user)):
     updates = {k: v for k, v in body.dict().items() if v is not None}
+    if "postcode" in updates:
+        updates["postcode"] = updates["postcode"].upper().strip()
     if updates:
         await db.users.update_one({"user_id": user["user_id"]}, {"$set": updates})
     fresh = await db.users.find_one({"user_id": user["user_id"]}, {"_id": 0})
@@ -640,11 +654,29 @@ async def chat_history(session_id: str, user: dict = Depends(get_current_user)):
 # ---------------------------------------------------------------------------
 class MessageCreate(BaseModel):
     recipient_id: str
-    text: str
+    text: str = ""
+    image_path: Optional[str] = None
 
 
 class RoomMessageCreate(BaseModel):
-    text: str
+    text: str = ""
+    image_path: Optional[str] = None
+
+
+class BlockInput(BaseModel):
+    user_id: str
+
+
+class ReportInput(BaseModel):
+    reported_id: str
+    reason: str
+    context: Optional[str] = None
+
+
+class PollCreate(BaseModel):
+    question: str
+    options: List[str]
+    activate: bool = False
 
 
 ROOMS = [
@@ -666,8 +698,65 @@ async def get_admin_user(user: dict = Depends(get_current_user)) -> dict:
     return user
 
 
+async def blocked_ids_for(uid: str) -> set:
+    """Return set of user_ids that are blocked by me OR who blocked me."""
+    out = set()
+    async for b in db.blocks.find({"blocker_id": uid}, {"_id": 0, "blocked_id": 1}):
+        out.add(b["blocked_id"])
+    async for b in db.blocks.find({"blocked_id": uid}, {"_id": 0, "blocker_id": 1}):
+        out.add(b["blocker_id"])
+    return out
+
+
+@api_router.get("/unread")
+async def unread_count(user: dict = Depends(get_current_user)):
+    count = await db.dm_messages.count_documents({"recipient_id": user["user_id"], "read": {"$ne": True}})
+    return {"count": count}
+
+
+@api_router.post("/block")
+async def block_user(body: BlockInput, user: dict = Depends(get_current_user)):
+    if body.user_id == user["user_id"]:
+        raise HTTPException(status_code=400, detail="Cannot block yourself")
+    existing = await db.blocks.find_one({"blocker_id": user["user_id"], "blocked_id": body.user_id})
+    if not existing:
+        await db.blocks.insert_one({"blocker_id": user["user_id"], "blocked_id": body.user_id, "created_at": now_iso()})
+    return {"ok": True}
+
+
+@api_router.post("/unblock")
+async def unblock_user(body: BlockInput, user: dict = Depends(get_current_user)):
+    await db.blocks.delete_many({"blocker_id": user["user_id"], "blocked_id": body.user_id})
+    return {"ok": True}
+
+
+@api_router.get("/blocks")
+async def my_blocks(user: dict = Depends(get_current_user)):
+    docs = await db.blocks.find({"blocker_id": user["user_id"]}, {"_id": 0}).to_list(500)
+    return {"blocked": [d["blocked_id"] for d in docs]}
+
+
+@api_router.post("/report")
+async def report_user(body: ReportInput, user: dict = Depends(get_current_user)):
+    reported = await db.users.find_one({"user_id": body.reported_id}, {"_id": 0})
+    report = {
+        "id": new_id("rep"),
+        "reporter_id": user["user_id"],
+        "reporter_name": user.get("name"),
+        "reported_id": body.reported_id,
+        "reported_name": reported.get("name") if reported else "Unknown",
+        "reason": body.reason,
+        "context": body.context or "",
+        "status": "open",
+        "created_at": now_iso(),
+    }
+    await db.reports.insert_one(report)
+    return {"ok": True}
+
+
 @api_router.get("/members")
 async def list_members(user: dict = Depends(get_current_user)):
+    blocked = await blocked_ids_for(user["user_id"])
     docs = await db.users.find({"user_id": {"$ne": user["user_id"]}}, {"_id": 0}).to_list(500)
     members = [
         {
@@ -679,7 +768,7 @@ async def list_members(user: dict = Depends(get_current_user)):
             "allow_messages": d.get("allow_messages", True),
         }
         for d in docs
-        if d.get("role") != "admin"
+        if d.get("role") != "admin" and d["user_id"] not in blocked
     ]
     return {"members": members}
 
@@ -687,14 +776,17 @@ async def list_members(user: dict = Depends(get_current_user)):
 @api_router.get("/conversations")
 async def conversations(user: dict = Depends(get_current_user)):
     uid = user["user_id"]
+    blocked = await blocked_ids_for(uid)
     msgs = await db.dm_messages.find(
         {"$or": [{"sender_id": uid}, {"recipient_id": uid}]}, {"_id": 0}
     ).sort("created_at", 1).to_list(2000)
     convs: dict = {}
     for m in msgs:
         other = m["recipient_id"] if m["sender_id"] == uid else m["sender_id"]
+        if other in blocked:
+            continue
         entry = convs.setdefault(other, {"other_id": other, "last_text": "", "last_at": "", "unread": 0})
-        entry["last_text"] = m["text"]
+        entry["last_text"] = m["text"] or ("📷 Photo" if m.get("image_path") else "")
         entry["last_at"] = m["created_at"]
         if m["recipient_id"] == uid and not m.get("read"):
             entry["unread"] += 1
@@ -725,11 +817,14 @@ async def get_messages(other_id: str, user: dict = Depends(get_current_user)):
 
 @api_router.post("/messages")
 async def send_message(body: MessageCreate, user: dict = Depends(get_current_user)):
-    if not body.text.strip():
+    if not body.text.strip() and not body.image_path:
         raise HTTPException(status_code=400, detail="Empty message")
     recipient = await db.users.find_one({"user_id": body.recipient_id})
     if not recipient:
         raise HTTPException(status_code=404, detail="Member not found")
+    blocked = await blocked_ids_for(user["user_id"])
+    if body.recipient_id in blocked:
+        raise HTTPException(status_code=403, detail="You can't message this member")
     if not recipient.get("allow_messages", True):
         raise HTTPException(status_code=403, detail="This member has turned off messages")
     msg = {
@@ -738,6 +833,7 @@ async def send_message(body: MessageCreate, user: dict = Depends(get_current_use
         "sender_id": user["user_id"],
         "recipient_id": body.recipient_id,
         "text": body.text.strip(),
+        "image_path": body.image_path,
         "read": False,
         "created_at": now_iso(),
     }
@@ -760,7 +856,9 @@ async def list_rooms(user: dict = Depends(get_current_user)):
 async def room_messages(room: str, user: dict = Depends(get_current_user)):
     if room not in ROOM_KEYS:
         raise HTTPException(status_code=404, detail="Room not found")
+    blocked = await blocked_ids_for(user["user_id"])
     msgs = await db.room_messages.find({"room": room}, {"_id": 0}).sort("created_at", 1).to_list(500)
+    msgs = [m for m in msgs if m.get("sender_id") not in blocked]
     return {"messages": msgs}
 
 
@@ -768,7 +866,7 @@ async def room_messages(room: str, user: dict = Depends(get_current_user)):
 async def post_room_message(room: str, body: RoomMessageCreate, user: dict = Depends(get_current_user)):
     if room not in ROOM_KEYS:
         raise HTTPException(status_code=404, detail="Room not found")
-    if not body.text.strip():
+    if not body.text.strip() and not body.image_path:
         raise HTTPException(status_code=400, detail="Empty message")
     msg = {
         "id": new_id("rm"),
@@ -777,6 +875,7 @@ async def post_room_message(room: str, body: RoomMessageCreate, user: dict = Dep
         "sender_name": user.get("name") or "Gardener",
         "sender_picture": user.get("picture"),
         "text": body.text.strip(),
+        "image_path": body.image_path,
         "created_at": now_iso(),
     }
     await db.room_messages.insert_one(msg)
@@ -844,6 +943,9 @@ async def admin_projects(admin: dict = Depends(get_admin_user)):
             "title": p["title"],
             "owner_name": u.get("name", "Unknown"),
             "owner_email": u.get("email", ""),
+            "owner_phone": u.get("phone", ""),
+            "owner_address": u.get("address", ""),
+            "owner_postcode": u.get("postcode", ""),
             "design_count": len(p.get("designs", [])),
             "original_path": p.get("original_path"),
             "latest_image": (p["designs"][-1]["image_path"] if p.get("designs") else None),
@@ -869,15 +971,209 @@ async def activate_poll(poll_id: str, admin: dict = Depends(get_admin_user)):
     return {"poll": doc}
 
 
+@api_router.post("/admin/polls")
+async def create_poll(body: PollCreate, admin: dict = Depends(get_admin_user)):
+    opts = [o.strip() for o in body.options if o.strip()]
+    if not body.question.strip() or len(opts) < 2:
+        raise HTTPException(status_code=400, detail="Need a question and at least 2 options")
+    poll = {
+        "id": new_id("poll"),
+        "question": body.question.strip(),
+        "options": opts,
+        "votes": [0] * len(opts),
+        "active": False,
+        "week": datetime.now(timezone.utc).isocalendar()[1],
+        "created_at": now_iso(),
+    }
+    await db.polls.insert_one(poll)
+    if body.activate:
+        await db.polls.update_many({"id": {"$ne": poll["id"]}}, {"$set": {"active": False}})
+        await db.polls.update_one({"id": poll["id"]}, {"$set": {"active": True}})
+        poll["active"] = True
+    poll.pop("_id", None)
+    return {"poll": poll}
+
+
+@api_router.delete("/admin/polls/{poll_id}")
+async def delete_poll(poll_id: str, admin: dict = Depends(get_admin_user)):
+    poll = await db.polls.find_one({"id": poll_id})
+    if not poll:
+        raise HTTPException(status_code=404, detail="Not found")
+    if poll.get("active"):
+        raise HTTPException(status_code=400, detail="Cannot delete the active poll")
+    await db.polls.delete_one({"id": poll_id})
+    return {"ok": True}
+
+
+@api_router.get("/admin/reports")
+async def admin_reports(admin: dict = Depends(get_admin_user)):
+    docs = await db.reports.find({}, {"_id": 0}).sort("created_at", -1).to_list(200)
+    return {"reports": docs}
+
+
+# ---------------------------------------------------------------------------
+# Maps & location (postcode geocoding + distances)
+# ---------------------------------------------------------------------------
+import math
+
+_geo_cache: dict = {}
+
+
+async def geocode_postcode(postcode: Optional[str]):
+    if not postcode:
+        return None
+    pc = postcode.upper().strip()
+    if not pc:
+        return None
+    if pc in _geo_cache:
+        return _geo_cache[pc]
+    compact = pc.replace(" ", "")
+    outcode = pc.split(" ")[0] if " " in pc else compact
+    try:
+        async with httpx.AsyncClient(timeout=8) as http:
+            r = await http.get(f"https://api.postcodes.io/postcodes/{compact}")
+            if r.status_code == 200:
+                res = r.json().get("result") or {}
+                if res.get("latitude") is not None:
+                    coord = {"lat": res["latitude"], "lng": res["longitude"]}
+                    _geo_cache[pc] = coord
+                    return coord
+            r2 = await http.get(f"https://api.postcodes.io/outcodes/{outcode}")
+            if r2.status_code == 200:
+                res = r2.json().get("result") or {}
+                if res.get("latitude") is not None:
+                    coord = {"lat": res["latitude"], "lng": res["longitude"]}
+                    _geo_cache[pc] = coord
+                    return coord
+    except Exception as e:
+        logger.warning(f"geocode failed for {pc}: {e}")
+    return None
+
+
+def haversine_km(a: dict, b: dict) -> float:
+    R = 6371.0
+    dlat = math.radians(b["lat"] - a["lat"])
+    dlng = math.radians(b["lng"] - a["lng"])
+    lat1 = math.radians(a["lat"])
+    lat2 = math.radians(b["lat"])
+    h = math.sin(dlat / 2) ** 2 + math.cos(lat1) * math.cos(lat2) * math.sin(dlng / 2) ** 2
+    return round(2 * R * math.asin(math.sqrt(h)), 1)
+
+
+def zoom_for(max_km: float) -> int:
+    if max_km <= 0:
+        return 11
+    for limit, z in [(3, 12), (10, 11), (25, 10), (60, 9), (150, 8), (400, 7)]:
+        if max_km <= limit:
+            return z
+    return 6
+
+
+def static_map_url(pins: list, center: Optional[dict]) -> Optional[str]:
+    if not pins:
+        return None
+    lats = [p["lat"] for p in pins]
+    lngs = [p["lng"] for p in pins]
+    c = center or {"lat": sum(lats) / len(lats), "lng": sum(lngs) / len(lngs)}
+    max_km = 0.0
+    for p in pins:
+        max_km = max(max_km, haversine_km(c, p))
+    z = zoom_for(max_km)
+    parts = [
+        "https://staticmap.openstreetmap.de/staticmap.php",
+        f"?center={c['lat']},{c['lng']}",
+        f"&zoom={z}",
+        "&size=640x360",
+        "&maptype=mapnik",
+    ]
+    for p in pins:
+        style = p.get("style", "red-pushpin")
+        parts.append(f"&markers={p['lat']},{p['lng']},{style}")
+    return "".join(parts)
+
+
+@api_router.get("/map/contractors")
+async def map_contractors(user: dict = Depends(get_current_user)):
+    me = await db.users.find_one({"user_id": user["user_id"]}, {"_id": 0})
+    my_coord = None
+    if me and me.get("lat") is not None:
+        my_coord = {"lat": me["lat"], "lng": me["lng"]}
+    elif me and me.get("postcode"):
+        my_coord = await geocode_postcode(me["postcode"])
+        if my_coord:
+            await db.users.update_one({"user_id": user["user_id"]}, {"$set": {"lat": my_coord["lat"], "lng": my_coord["lng"]}})
+
+    cons = await db.contractors.find({}, {"_id": 0}).to_list(200)
+    pins = []
+    out = []
+    for c in cons:
+        coord = None
+        if c.get("lat") is not None:
+            coord = {"lat": c["lat"], "lng": c["lng"]}
+        elif c.get("postcode"):
+            coord = await geocode_postcode(c["postcode"])
+            if coord:
+                await db.contractors.update_one({"id": c["id"]}, {"$set": {"lat": coord["lat"], "lng": coord["lng"]}})
+        item = {**c, "lat": coord["lat"] if coord else None, "lng": coord["lng"] if coord else None, "distance_km": None}
+        if coord and my_coord:
+            item["distance_km"] = haversine_km(my_coord, coord)
+        if coord:
+            pins.append({"lat": coord["lat"], "lng": coord["lng"], "style": "green-pushpin"})
+        out.append(item)
+
+    out.sort(key=lambda x: (x["distance_km"] is None, x["distance_km"] if x["distance_km"] is not None else 0))
+    if my_coord:
+        pins.append({"lat": my_coord["lat"], "lng": my_coord["lng"], "style": "red-pushpin"})
+    return {"me": my_coord, "contractors": out, "map_url": static_map_url(pins, my_coord)}
+
+
+@api_router.get("/admin/map")
+async def admin_map(admin: dict = Depends(get_admin_user)):
+    owner_ids = await db.projects.distinct("owner_id")
+    customers = []
+    pins = []
+    for oid in owner_ids:
+        u = await db.users.find_one({"user_id": oid}, {"_id": 0})
+        if not u:
+            continue
+        coord = None
+        if u.get("lat") is not None:
+            coord = {"lat": u["lat"], "lng": u["lng"]}
+        elif u.get("postcode"):
+            coord = await geocode_postcode(u["postcode"])
+            if coord:
+                await db.users.update_one({"user_id": oid}, {"$set": {"lat": coord["lat"], "lng": coord["lng"]}})
+        pc = await db.projects.count_documents({"owner_id": oid})
+        customers.append({"name": u.get("name"), "postcode": u.get("postcode"), "phone": u.get("phone"),
+                          "lat": coord["lat"] if coord else None, "lng": coord["lng"] if coord else None, "project_count": pc})
+        if coord:
+            pins.append({"lat": coord["lat"], "lng": coord["lng"], "style": "red-pushpin"})
+
+    cons = await db.contractors.find({}, {"_id": 0}).to_list(200)
+    contractors = []
+    for c in cons:
+        coord = None
+        if c.get("lat") is not None:
+            coord = {"lat": c["lat"], "lng": c["lng"]}
+        elif c.get("postcode"):
+            coord = await geocode_postcode(c["postcode"])
+        contractors.append({"name": c.get("name"), "postcode": c.get("postcode"),
+                            "lat": coord["lat"] if coord else None, "lng": coord["lng"] if coord else None})
+        if coord:
+            pins.append({"lat": coord["lat"], "lng": coord["lng"], "style": "green-pushpin"})
+
+    return {"customers": customers, "contractors": contractors, "map_url": static_map_url(pins, None)}
+
+
 
 # ---------------------------------------------------------------------------
 # Seed data
 # ---------------------------------------------------------------------------
 SEED_CONTRACTORS = [
-    {"name": "GreenThumb Landscapes", "tagline": "Award-winning garden transformations", "services": ["Landscaping", "Patios", "Planting"], "phone": "+44 20 7946 0123", "rating": 4.8, "review_count": 0, "location": "London", "image": "https://images.unsplash.com/photo-1416879595882-3373a0480b5b?w=400&q=80"},
-    {"name": "Blossom & Bee Gardens", "tagline": "Wildlife-friendly, pollinator gardens 🐝", "services": ["Wildflower meadows", "Ponds", "Planting"], "phone": "+44 161 496 0199", "rating": 4.9, "review_count": 0, "location": "Manchester", "image": "https://images.unsplash.com/photo-1523348837708-15d4a09cfac2?w=400&q=80"},
-    {"name": "Stone & Slate Patios", "tagline": "Premium paving and hard landscaping", "services": ["Patios", "Driveways", "Decking"], "phone": "+44 121 496 0177", "rating": 4.6, "review_count": 0, "location": "Birmingham", "image": "https://images.unsplash.com/photo-1558904541-efa843a96f01?w=400&q=80"},
-    {"name": "Tranquil Waters Ltd", "tagline": "Water features & serene retreats 💧", "services": ["Ponds", "Fountains", "Lighting"], "phone": "+44 113 496 0155", "rating": 4.7, "review_count": 0, "location": "Leeds", "image": "https://images.unsplash.com/photo-1585320806297-9794b3e4eeae?w=400&q=80"},
+    {"name": "GreenThumb Landscapes", "tagline": "Award-winning garden transformations", "services": ["Landscaping", "Patios", "Planting"], "phone": "+44 20 7946 0123", "rating": 4.8, "review_count": 0, "location": "London", "postcode": "SW1A", "image": "https://images.unsplash.com/photo-1416879595882-3373a0480b5b?w=400&q=80"},
+    {"name": "Blossom & Bee Gardens", "tagline": "Wildlife-friendly, pollinator gardens 🐝", "services": ["Wildflower meadows", "Ponds", "Planting"], "phone": "+44 161 496 0199", "rating": 4.9, "review_count": 0, "location": "Manchester", "postcode": "M1", "image": "https://images.unsplash.com/photo-1523348837708-15d4a09cfac2?w=400&q=80"},
+    {"name": "Stone & Slate Patios", "tagline": "Premium paving and hard landscaping", "services": ["Patios", "Driveways", "Decking"], "phone": "+44 121 496 0177", "rating": 4.6, "review_count": 0, "location": "Birmingham", "postcode": "B1", "image": "https://images.unsplash.com/photo-1558904541-efa843a96f01?w=400&q=80"},
+    {"name": "Tranquil Waters Ltd", "tagline": "Water features & serene retreats 💧", "services": ["Ponds", "Fountains", "Lighting"], "phone": "+44 113 496 0155", "rating": 4.7, "review_count": 0, "location": "Leeds", "postcode": "LS1", "image": "https://images.unsplash.com/photo-1585320806297-9794b3e4eeae?w=400&q=80"},
 ]
 
 

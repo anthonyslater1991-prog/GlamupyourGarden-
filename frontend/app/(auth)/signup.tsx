@@ -29,6 +29,9 @@ export default function Signup() {
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
+  const [phone, setPhone] = useState("");
+  const [address, setAddress] = useState("");
+  const [postcode, setPostcode] = useState("");
   const [role, setRole] = useState("customer");
   const [busy, setBusy] = useState(false);
 
@@ -37,9 +40,21 @@ export default function Signup() {
       toast.show("Fill all fields (password 6+ chars)", "error");
       return;
     }
+    if (!postcode.trim() || !phone.trim()) {
+      toast.show("Please add your postcode and phone number 📍", "error");
+      return;
+    }
     setBusy(true);
     try {
-      await register(name.trim(), email.trim(), password, role);
+      await register({
+        name: name.trim(),
+        email: email.trim(),
+        password,
+        role,
+        phone: phone.trim(),
+        address: address.trim(),
+        postcode: postcode.trim(),
+      });
       router.replace("/(tabs)");
     } catch (e: any) {
       toast.show(e.message || "Sign up failed", "error");
@@ -104,6 +119,46 @@ export default function Signup() {
             />
           </View>
 
+          <View style={styles.inputWrap}>
+            <Feather name="phone" size={18} color={colors.muted} />
+            <TextInput
+              testID="signup-phone-input"
+              style={styles.input}
+              placeholder="Phone number"
+              placeholderTextColor={colors.muted}
+              keyboardType="phone-pad"
+              value={phone}
+              onChangeText={setPhone}
+            />
+          </View>
+
+          <View style={styles.inputWrap}>
+            <Feather name="map-pin" size={18} color={colors.muted} />
+            <TextInput
+              testID="signup-postcode-input"
+              style={styles.input}
+              placeholder="Postcode (e.g. SW1A 1AA)"
+              placeholderTextColor={colors.muted}
+              autoCapitalize="characters"
+              value={postcode}
+              onChangeText={setPostcode}
+            />
+          </View>
+
+          <View style={styles.inputWrap}>
+            <Feather name="home" size={18} color={colors.muted} />
+            <TextInput
+              testID="signup-address-input"
+              style={styles.input}
+              placeholder="Address (optional)"
+              placeholderTextColor={colors.muted}
+              value={address}
+              onChangeText={setAddress}
+            />
+          </View>
+
+          <Text style={styles.hint}>📍 We use your postcode to match you with contractors nearby.</Text>
+
           <Text style={styles.roleLabel}>I am a...</Text>
           <View style={styles.roleRow}>
             {ROLES.map((r) => {
@@ -165,6 +220,7 @@ const styles = StyleSheet.create({
     height: 54,
   },
   input: { flex: 1, fontFamily: fonts.text, fontSize: 15, color: colors.onSurface },
+  hint: { fontFamily: fonts.text, color: colors.muted, fontSize: 12, lineHeight: 17 },
   roleLabel: { fontFamily: fonts.text, fontWeight: "700", color: colors.onSurface, marginTop: spacing.xs },
   roleRow: { flexDirection: "row", gap: spacing.md },
   roleCard: {
