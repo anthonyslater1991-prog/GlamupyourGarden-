@@ -8,6 +8,7 @@ import {
   ActivityIndicator,
   Linking,
   ScrollView,
+  Modal,
 } from "react-native";
 import { Image } from "expo-image";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
@@ -20,6 +21,8 @@ import { apiFetch, fileUrl } from "@/src/lib/api";
 import { uploadImage } from "@/src/lib/upload";
 import { useAuth } from "@/src/context/AuthContext";
 import { useToast } from "@/src/components/Toast";
+import { storage } from "@/src/utils/storage";
+import CompareModal from "@/src/components/CompareModal";
 import { colors, spacing, radius, fonts } from "@/src/theme";
 
 const CHANGES = [
@@ -33,6 +36,20 @@ const COLOUR_SCHEMES = ["Green & natural", "Blues & purples", "Warm sunset", "Wh
 const ORNAMENTS = ["Water feature", "Statues & ornaments", "Pergola", "Fire pit", "Raised beds", "Bird bath", "Garden lighting", "Decking"];
 
 type Result = { image_path: string; prompt: string; hotspots: any[] };
+type Filters = {
+  selChanges: string[];
+  style: string;
+  gardenType: string | null;
+  mood: string | null;
+  colourScheme: string | null;
+  ornaments: string[];
+  wishlistText: string;
+  mustHaves: string;
+  notes: string;
+};
+type Preset = { id: string; name: string; filters: Filters };
+
+const PRESETS_KEY = "glam_sandbox_presets";
 
 export default function AdminSandbox() {
   const insets = useSafeAreaInsets();
@@ -52,12 +69,55 @@ export default function AdminSandbox() {
   const [notes, setNotes] = useState("");
 
   const [busy, setBusy] = useState(false);
-  const [result, setResult] = useState<Result | null>(null);
+  const [results, setResults] = useState<Result[]>([]);
   const [showBefore, setShowBefore] = useState(false);
+  const [presets, setPresets] = useState<Preset[]>([]);
+  const [saveOpen, setSaveOpen] = useState(false);
+  const [presetName, setPresetName] = useState("");
+  const [compareOpen, setCompareOpen] = useState(false);
+
+  const result = results[0] || null;
 
   useEffect(() => {
     if (user && user.role !== "admin") router.replace("/(tabs)");
   }, [user]);
+
+  useEffect(() => {
+    storage.getItem<Preset[]>(PRESETS_KEY, []).then((p) => setPresets(p || []));
+  }, []);
+
+  const currentFilters = (): Filters => ({
+    selChanges, style, gardenType, mood, colourScheme, ornaments, wishlistText, mustHaves, notes,
+  });
+
+  const applyFilters = (f: Filters) => {
+    setSelChanges(f.selChanges || []);
+    setStyle(f.style || STYLES[0]);
+    setGardenType(f.gardenType ?? null);
+    setMood(f.mood ?? null);
+    setColourScheme(f.colourScheme ?? null);
+    setOrnaments(f.ornaments || []);
+    setWishlistText(f.wishlistText || "");
+    setMustHaves(f.mustHaves || "");
+    setNotes(f.notes || "");
+  };
+
+  const savePreset = async () => {
+    const name = presetName.trim();
+    if (!name) return;
+    const next = [{ id: `p_${Date.now()}`, name, filters: currentFilters() }, ...presets].slice(0, 20);
+    setPresets(next);
+    await storage.setItem(PRESETS_KEY, next);
+    setPresetName("");
+    setSaveOpen(false);
+    toast.show(`Recipe "${name}" saved 📌`, "success");
+  };
+
+  const deletePreset = async (id: string) => {
+    const next = presets.filter((p) => p.id !== id);
+    setPresets(next);
+    await storage.setItem(PRESETS_KEY, next);
+  };
 
   const toggle = (arr: string[], set: (v: string[]) => void, val: string) => {
     set(arr.includes(val) ? arr.filter((x) => x !== val) : [...arr, val]);
@@ -76,20 +136,19 @@ export default function AdminSandbox() {
     const perm = await ImagePicker.requestCameraPermissionsAsync();
     if (!perm.granted) return handlePermissionDenied(perm.canAskAgain, "Camera");
     const res = await ImagePicker.launchCameraAsync({ quality: 0.8 });
-    if (!res.canceled && res.assets?.length) { setImageUri(res.assets[0].uri); setResult(null); }
+    if (!res.canceled && res.assets?.length) { setImageUri(res.assets[0].uri); }
   };
 
   const fromLibrary = async () => {
     const perm = await ImagePicker.requestMediaLibraryPermissionsAsync();
     if (!perm.granted) return handlePermissionDenied(perm.canAskAgain, "Photos");
     const res = await ImagePicker.launchImageLibraryAsync({ mediaTypes: ["images"], quality: 0.8 });
-    if (!res.canceled && res.assets?.length) { setImageUri(res.assets[0].uri); setResult(null); }
+    if (!res.canceled && res.assets?.length) { setImageUri(res.assets[0].uri); }
   };
 
   const generate = async () => {
     if (!imageUri) { toast.show("Add a garden photo first 📷", "error"); return; }
     setBusy(true);
-    setResult(null);
     try {
       const path = await uploadImage(imageUri);
       const wishlist = wishlistText
@@ -111,7 +170,7 @@ export default function AdminSandbox() {
           wishlist,
         },
       });
-      setResult(r);
+      setResults((prev) => [r, ...prev].slice(0, 2));
       setShowBefore(false);
       toast.show("Generated — nothing saved to the database ✨", "success");
     } catch (e: any) {
@@ -151,6 +210,33 @@ export default function AdminSandbox() {
           </Text>
         </View>
 
+        {/* Saved recipes (presets) */}
+        <View style={styles.field}>
+          <View style={styles.promptTop}>
+            <Text style={styles.panelLabel}>Saved recipes 📌</Text>
+            <Pressable testID="save-preset" hitSlop={8} onPress={() => setSaveOpen(true)} style={styles.savePresetBtn}>
+              <Feather name="plus" size={13} color={colors.brand} />
+              <Text style={styles.savePresetText}>Save current</Text>
+            </Pressable>
+          </View>
+          {presets.length === 0 ? (
+            <Text style={styles.helperMuted}>Save a filter combo to re-run it instantly later.</Text>
+          ) : (
+            <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: spacing.sm }}>
+              {presets.map((p) => (
+                <View key={p.id} style={styles.presetChip}>
+                  <Pressable testID={`preset-${p.name}`} onPress={() => { applyFilters(p.filters); toast.show(`Recipe "${p.name}" loaded`, "success"); }}>
+                    <Text style={styles.presetChipText}>{p.name}</Text>
+                  </Pressable>
+                  <Pressable testID={`preset-del-${p.name}`} hitSlop={6} onPress={() => deletePreset(p.id)}>
+                    <Feather name="x" size={13} color={colors.muted} />
+                  </Pressable>
+                </View>
+              ))}
+            </ScrollView>
+          )}
+        </View>
+
         {/* Image preview */}
         {displayUri ? (
           <View style={styles.previewWrap}>
@@ -160,7 +246,7 @@ export default function AdminSandbox() {
                 <Text style={styles.stateBadgeText}>{showBefore ? "BEFORE" : "AFTER ✨"}</Text>
               </View>
             )}
-            <Pressable style={styles.retake} onPress={() => { setImageUri(null); setResult(null); }} testID="sandbox-retake">
+            <Pressable style={styles.retake} onPress={() => { setImageUri(null); setResults([]); }} testID="sandbox-retake">
               <Feather name="refresh-cw" size={15} color="#fff" />
               <Text style={styles.retakeText}>Change photo</Text>
             </Pressable>
@@ -195,6 +281,14 @@ export default function AdminSandbox() {
             </View>
             <Text style={styles.promptText} selectable>{result.prompt}</Text>
           </View>
+        )}
+
+        {/* Compare last two generations */}
+        {results.length === 2 && (
+          <Pressable testID="sandbox-compare" style={styles.compareBar} onPress={() => setCompareOpen(true)}>
+            <Feather name="columns" size={16} color="#fff" />
+            <Text style={styles.compareBarText}>Compare last 2 generations</Text>
+          </Pressable>
         )}
 
         {/* Filters */}
@@ -255,6 +349,40 @@ export default function AdminSandbox() {
           )}
         </Pressable>
       </View>
+
+      <CompareModal
+        visible={compareOpen}
+        onClose={() => setCompareOpen(false)}
+        title="Compare generations"
+        left={{ uri: results[1] ? fileUrl(results[1].image_path) : undefined, label: "Previous", caption: results[1]?.prompt }}
+        right={{ uri: results[0] ? fileUrl(results[0].image_path) : undefined, label: "Latest", caption: results[0]?.prompt }}
+      />
+
+      <Modal visible={saveOpen} transparent animationType="fade" onRequestClose={() => setSaveOpen(false)}>
+        <Pressable style={styles.modalOverlay} onPress={() => setSaveOpen(false)}>
+          <Pressable style={styles.saveCard} onPress={(e) => e.stopPropagation()}>
+            <Text style={styles.saveTitle}>Save recipe 📌</Text>
+            <Text style={styles.helperMuted}>Give this filter combo a name so you can re-run it later.</Text>
+            <TextInput
+              testID="preset-name-input"
+              style={styles.input}
+              placeholder="e.g. Cottage sunset"
+              placeholderTextColor={colors.muted}
+              value={presetName}
+              onChangeText={setPresetName}
+              autoFocus
+            />
+            <View style={styles.saveActions}>
+              <Pressable style={styles.saveCancel} onPress={() => { setSaveOpen(false); setPresetName(""); }}>
+                <Text style={styles.saveCancelText}>Cancel</Text>
+              </Pressable>
+              <Pressable testID="preset-save-confirm" style={[styles.saveConfirm, !presetName.trim() && styles.ctaDisabled]} onPress={savePreset} disabled={!presetName.trim()}>
+                <Text style={styles.saveConfirmText}>Save</Text>
+              </Pressable>
+            </View>
+          </Pressable>
+        </Pressable>
+      </Modal>
     </View>
   );
 }
@@ -326,4 +454,19 @@ const styles = StyleSheet.create({
   cta: { flexDirection: "row", alignItems: "center", justifyContent: "center", gap: spacing.sm, backgroundColor: colors.brand, height: 56, borderRadius: radius.md },
   ctaDisabled: { opacity: 0.5 },
   ctaText: { color: "#fff", fontFamily: fonts.text, fontWeight: "700", fontSize: 16 },
+  savePresetBtn: { flexDirection: "row", alignItems: "center", gap: 5, borderWidth: 1.5, borderColor: colors.brand, borderRadius: radius.pill, paddingVertical: 5, paddingHorizontal: spacing.md },
+  savePresetText: { fontFamily: fonts.text, fontWeight: "700", color: colors.brand, fontSize: 12 },
+  helperMuted: { fontFamily: fonts.text, color: colors.muted, fontSize: 12, lineHeight: 17 },
+  presetChip: { flexDirection: "row", alignItems: "center", gap: 6, backgroundColor: "#EFF4EE", borderRadius: radius.pill, paddingVertical: 8, paddingHorizontal: spacing.md },
+  presetChipText: { fontFamily: fonts.text, fontWeight: "700", color: colors.brand, fontSize: 13 },
+  compareBar: { flexDirection: "row", alignItems: "center", justifyContent: "center", gap: spacing.sm, backgroundColor: colors.brandSecondary, height: 48, borderRadius: radius.md },
+  compareBarText: { color: "#fff", fontFamily: fonts.text, fontWeight: "700", fontSize: 14 },
+  modalOverlay: { flex: 1, backgroundColor: "rgba(42,54,46,0.55)", justifyContent: "center", padding: spacing.xl },
+  saveCard: { backgroundColor: colors.surfaceSecondary, borderRadius: radius.lg, padding: spacing.xl, gap: spacing.md },
+  saveTitle: { fontFamily: fonts.display, fontSize: 20, color: colors.onSurface },
+  saveActions: { flexDirection: "row", gap: spacing.md, marginTop: spacing.xs },
+  saveCancel: { flex: 1, alignItems: "center", justifyContent: "center", height: 48, borderRadius: radius.md, borderWidth: 1.5, borderColor: colors.border },
+  saveCancelText: { fontFamily: fonts.text, fontWeight: "700", color: colors.onSurfaceSecondary },
+  saveConfirm: { flex: 1, alignItems: "center", justifyContent: "center", height: 48, borderRadius: radius.md, backgroundColor: colors.brand },
+  saveConfirmText: { fontFamily: fonts.text, fontWeight: "700", color: "#fff" },
 });

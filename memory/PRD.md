@@ -122,6 +122,15 @@ Garden makeover app: users photograph their garden, choose changes, and generate
 - Reviews now store author_id for reliable future cleanup.
 - Verified on preview: users=admin+Mary only; visits/reports/contracts/posts=0; stats & overview visitors all 0.
 
+## Implemented (2026-06 fork) — iteration 16: Compare/Reel + Sandbox Presets + Backend refactor
+- Customer Compare + Version Reel (project screen): horizontal reel of every redesign (Before, v1, v2...); tap a snapshot to view it; "Compare" button opens a side-by-side CompareModal with a "vs Original" / "vs Previous" toggle. New reusable component src/components/CompareModal.tsx.
+- Admin Sandbox Prompt Presets: save/load/delete named filter recipes (stored client-side via AsyncStorage, key glam_sandbox_presets) so recipes can be re-run instantly.
+- Admin Sandbox "Compare last 2 generations": keeps last two sandbox results and shows them side-by-side (reuses CompareModal, shows each prompt as caption).
+- Backend refactor: split monolithic server.py (2600+ lines) into core.py (infra, models, all shared helpers, api_router) + routes_*.py modules (auth, media, ai, projects, community, contractors, contracts, payments, engagement, assistant, messaging, admin, geo). Entrypoint unchanged (server:app). All 92 routes preserved; 31/31 regression pytest passed (tests/test_refactor_regression.py).
+- Defensive fix: project deep-link now waits for AuthContext to finish loading before fetching (avoids 401 race on web/PWA reload).
+- Verified: 31/31 backend pytest + frontend Playwright (iteration_13 report).
+
+
 ## Implemented (2026-06 fork) — iteration 15: Admin AI Sandbox + Ask Bloom shortcut
 - Admin-only AI Redesign Sandbox (/admin/sandbox, linked from Admin Dashboard): upload a garden photo, pick the same redesign filters (changes/style/garden type/mood/colour/ornaments/wishlist/must-haves/notes), tap Generate → runs the exact Gemini flow but creates NO project and persists NO design/version. Stores only the generated image in object storage (APP/sandbox/...) so it can be viewed, and returns + displays the EXACT prompt sent to the AI (copyable). Before/After toggle.
 - Backend: POST /api/admin/sandbox-redesign (admin-only, 403 otherwise). Extracted shared build_redesign_prompt() reused by the real redesign endpoint.

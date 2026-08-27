@@ -22,6 +22,7 @@ import * as Haptics from "expo-haptics";
 import { apiFetch, fileUrl } from "@/src/lib/api";
 import { useAuth } from "@/src/context/AuthContext";
 import { storage } from "@/src/utils/storage";
+import CompareModal from "@/src/components/CompareModal";
 import { useToast } from "@/src/components/Toast";
 import { colors, spacing, radius, fonts } from "@/src/theme";
 
@@ -44,7 +45,7 @@ export default function ProjectViewer() {
   const insets = useSafeAreaInsets();
   const router = useRouter();
   const toast = useToast();
-  const { user, refresh } = useAuth();
+  const { user, refresh, loading: authLoading } = useAuth();
   const { width } = useWindowDimensions();
 
   const [project, setProject] = useState<Project | null>(null);
@@ -65,6 +66,8 @@ export default function ProjectViewer() {
   const [priceSummary, setPriceSummary] = useState<any>(null);
   const [priceInput, setPriceInput] = useState("");
   const [addingPrice, setAddingPrice] = useState(false);
+  const [compareOpen, setCompareOpen] = useState(false);
+  const [compareMode, setCompareMode] = useState<"original" | "previous">("original");
 
   useEffect(() => {
     if (activeHotspot) {
@@ -108,7 +111,7 @@ export default function ProjectViewer() {
     }
   }, [id]);
 
-  useEffect(() => { load(); }, [load]);
+  useEffect(() => { if (!authLoading) load(); }, [load, authLoading]);
 
   // Merge any products the AI assistant queued into the wishlist.
   useEffect(() => {
@@ -222,6 +225,20 @@ export default function ProjectViewer() {
   const displayPath = showBefore || !current ? project.original_path : current.image_path;
   const displayUri = fileUrl(displayPath);
 
+  const designs = project.designs || [];
+  const compareTarget = current || (designs.length ? designs[designs.length - 1] : null);
+  const compareTargetIndex = compareTarget ? designs.findIndex((d) => d.id === compareTarget.id) : -1;
+  const compareRight = compareTarget
+    ? { uri: fileUrl(compareTarget.image_path), label: `Version ${compareTargetIndex + 1}` }
+    : { uri: undefined, label: "Latest" };
+  let compareLeft: { uri?: string; label: string };
+  if (compareMode === "previous" && compareTargetIndex > 0) {
+    const prev = designs[compareTargetIndex - 1];
+    compareLeft = { uri: fileUrl(prev.image_path), label: `Version ${compareTargetIndex}` };
+  } else {
+    compareLeft = { uri: fileUrl(project.original_path), label: "Before" };
+  }
+
   return (
     <View style={styles.root}>
       {/* Header */}
@@ -300,6 +317,37 @@ export default function ProjectViewer() {
 
         {current && !showBefore && showHotspots && (
           <Text style={styles.shopHint}>Tap the + markers to shop this look 🛍️</Text>
+        )}
+
+        {/* Version reel — the garden's journey */}
+        {designs.length > 0 && (
+          <View style={styles.reelSection}>
+            <View style={styles.reelHeader}>
+              <Text style={styles.reelTitle}>Your garden&apos;s journey 🎞️</Text>
+              <Pressable testID="open-compare" style={styles.compareBtn} onPress={() => { setCompareMode("original"); setCompareOpen(true); }}>
+                <Feather name="columns" size={14} color={colors.brand} />
+                <Text style={styles.compareBtnText}>Compare</Text>
+              </Pressable>
+            </View>
+            <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: spacing.sm, paddingHorizontal: spacing.lg }}>
+              <ReelThumb
+                uri={fileUrl(project.original_path)}
+                label="Before"
+                active={showBefore}
+                onPress={() => { if (Platform.OS !== "web") Haptics.selectionAsync(); setShowBefore(true); }}
+              />
+              {designs.map((d, i) => (
+                <ReelThumb
+                  key={d.id}
+                  uri={fileUrl(d.image_path)}
+                  label={`v${i + 1}`}
+                  active={!showBefore && current?.id === d.id}
+                  onPress={() => { if (Platform.OS !== "web") Haptics.selectionAsync(); setCurrent(d); setShowBefore(false); setShowHotspots(true); }}
+                />
+              ))}
+            </ScrollView>
+            <Text style={styles.reelHint}>Tap a snapshot to view it · tap Compare to see it side-by-side ✨</Text>
+          </View>
         )}
 
         {/* Redesign panel */}
@@ -549,7 +597,29 @@ export default function ProjectViewer() {
           </View>
         </View>
       </Modal>
+
+      <CompareModal
+        visible={compareOpen}
+        onClose={() => setCompareOpen(false)}
+        title="Compare your garden"
+        segments={[{ key: "original", label: "vs Original" }, { key: "previous", label: "vs Previous" }]}
+        activeSegment={compareMode}
+        onSegment={(k) => setCompareMode(k as "original" | "previous")}
+        left={compareLeft}
+        right={compareRight}
+      />
     </View>
+  );
+}
+
+function ReelThumb({ uri, label, active, onPress }: { uri?: string; label: string; active: boolean; onPress: () => void }) {
+  return (
+    <Pressable testID={`reel-${label}`} onPress={onPress} style={styles.reelItem}>
+      <View style={[styles.reelThumbWrap, active && styles.reelThumbActive]}>
+        {uri ? <Image source={{ uri }} style={StyleSheet.absoluteFill} contentFit="cover" /> : null}
+      </View>
+      <Text style={[styles.reelLabel, active && styles.reelLabelActive]} numberOfLines={1}>{label}</Text>
+    </Pressable>
   );
 }
 
@@ -570,6 +640,17 @@ const styles = StyleSheet.create({
   toggleText: { fontFamily: fonts.text, fontWeight: "700", color: colors.onSurface, fontSize: 13 },
   eyeToggle: { position: "absolute", bottom: spacing.md, right: spacing.md, width: 38, height: 38, borderRadius: 19, backgroundColor: colors.brand, alignItems: "center", justifyContent: "center" },
   shopHint: { fontFamily: fonts.text, color: colors.muted, textAlign: "center", marginTop: spacing.md, fontSize: 13 },
+  reelSection: { marginTop: spacing.lg, gap: spacing.sm },
+  reelHeader: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", paddingHorizontal: spacing.lg },
+  reelTitle: { fontFamily: fonts.display, fontSize: 17, color: colors.onSurface },
+  compareBtn: { flexDirection: "row", alignItems: "center", gap: 6, borderWidth: 1.5, borderColor: colors.brand, borderRadius: radius.pill, paddingVertical: 6, paddingHorizontal: spacing.md },
+  compareBtnText: { fontFamily: fonts.text, fontWeight: "700", color: colors.brand, fontSize: 13 },
+  reelItem: { alignItems: "center", gap: 5, width: 74 },
+  reelThumbWrap: { width: 74, height: 74, borderRadius: radius.md, overflow: "hidden", backgroundColor: colors.surfaceTertiary, borderWidth: 2, borderColor: "transparent" },
+  reelThumbActive: { borderColor: colors.brand },
+  reelLabel: { fontFamily: fonts.text, fontWeight: "700", color: colors.muted, fontSize: 12 },
+  reelLabelActive: { color: colors.brand },
+  reelHint: { fontFamily: fonts.text, color: colors.muted, fontSize: 11, textAlign: "center", paddingHorizontal: spacing.lg },
   panel: { padding: spacing.lg, gap: spacing.md },
   panelTitle: { fontFamily: fonts.display, fontSize: 22, color: colors.onSurface },
   panelLabel: { fontFamily: fonts.text, fontWeight: "700", color: colors.onSurface, marginTop: spacing.xs },
