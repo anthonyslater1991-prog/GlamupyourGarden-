@@ -228,6 +228,26 @@ export default function Home() {
           <QuickAction icon="bar-chart-2" label="Weekly Poll" onPress={() => poll && setPollOpen(true)} />
         </View>
 
+        {/* Ask Bloom — AI assistant shortcut */}
+        <Pressable testID="ask-bloom" style={styles.bloomCard} onPress={() => router.push("/chat")}>
+          <LinearGradient
+            colors={[colors.brandSecondary, colors.brand]}
+            start={{ x: 0, y: 0 }}
+            end={{ x: 1, y: 1 }}
+            style={styles.bloomIcon}
+          >
+            <Text style={styles.bloomEmoji}>🐝</Text>
+          </LinearGradient>
+          <View style={{ flex: 1 }}>
+            <Text style={styles.bloomTitle}>Ask Bloom</Text>
+            <Text style={styles.bloomSub}>Quick answers to any garden question 🌿</Text>
+          </View>
+          <View style={styles.bloomBtn}>
+            <Feather name="message-circle" size={16} color="#fff" />
+            <Text style={styles.bloomBtnText}>Chat</Text>
+          </View>
+        </Pressable>
+
         {/* My projects */}
         <View style={styles.sectionHeader}>
           <Text style={styles.sectionTitle}>My Projects</Text>
@@ -414,6 +434,24 @@ const styles = StyleSheet.create({
     justifyContent: "center",
   },
   quickLabel: { fontFamily: fonts.text, fontSize: 12, fontWeight: "600", color: colors.onSurface },
+  bloomCard: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: spacing.md,
+    marginHorizontal: spacing.lg,
+    marginTop: spacing.md,
+    padding: spacing.md,
+    backgroundColor: colors.surfaceSecondary,
+    borderRadius: radius.md,
+    borderWidth: 1,
+    borderColor: colors.border,
+  },
+  bloomIcon: { width: 46, height: 46, borderRadius: radius.pill, alignItems: "center", justifyContent: "center" },
+  bloomEmoji: { fontSize: 22 },
+  bloomTitle: { fontFamily: fonts.text, fontWeight: "800", color: colors.onSurface, fontSize: 15 },
+  bloomSub: { fontFamily: fonts.text, color: colors.onSurfaceTertiary, fontSize: 12, marginTop: 1 },
+  bloomBtn: { flexDirection: "row", alignItems: "center", gap: 6, backgroundColor: colors.brand, paddingVertical: 8, paddingHorizontal: spacing.md, borderRadius: radius.pill },
+  bloomBtnText: { color: "#fff", fontFamily: fonts.text, fontWeight: "700", fontSize: 13 },
   sectionHeader: {
     flexDirection: "row",
     justifyContent: "space-between",

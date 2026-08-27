@@ -122,6 +122,13 @@ Garden makeover app: users photograph their garden, choose changes, and generate
 - Reviews now store author_id for reliable future cleanup.
 - Verified on preview: users=admin+Mary only; visits/reports/contracts/posts=0; stats & overview visitors all 0.
 
+## Implemented (2026-06 fork) — iteration 15: Admin AI Sandbox + Ask Bloom shortcut
+- Admin-only AI Redesign Sandbox (/admin/sandbox, linked from Admin Dashboard): upload a garden photo, pick the same redesign filters (changes/style/garden type/mood/colour/ornaments/wishlist/must-haves/notes), tap Generate → runs the exact Gemini flow but creates NO project and persists NO design/version. Stores only the generated image in object storage (APP/sandbox/...) so it can be viewed, and returns + displays the EXACT prompt sent to the AI (copyable). Before/After toggle.
+- Backend: POST /api/admin/sandbox-redesign (admin-only, 403 otherwise). Extracted shared build_redesign_prompt() reused by the real redesign endpoint.
+- Home: "Ask Bloom" AI-assistant shortcut card added (in addition to the existing FAB) → opens the chat assistant for quick garden Q&A.
+- Verified: 4/4 backend pytest (incl. no-project/no-design assertions + prompt reflects all filters + image servable) + frontend Playwright (iteration 12 report).
+
+
 ## Backlog
 ### P1
 - Real member-to-member messaging + community chat room (opt-out aware)

@@ -204,6 +204,15 @@ export default function AdminDashboard() {
           <Feather name="chevron-right" size={20} color={colors.muted} />
         </Pressable>
 
+        <Pressable testID="open-admin-sandbox" style={styles.mapLink} onPress={() => router.push("/admin/sandbox")}>
+          <View style={styles.mapLinkIcon}><Feather name="zap" size={18} color={colors.brand} /></View>
+          <View style={{ flex: 1 }}>
+            <Text style={styles.mapLinkTitle}>AI Redesign Sandbox 🧪</Text>
+            <Text style={styles.mapLinkSub}>Test AI output & prompts — nothing is saved</Text>
+          </View>
+          <Feather name="chevron-right" size={20} color={colors.muted} />
+        </Pressable>
+
         <Text style={styles.sectionTitle}>Community totals 🌍</Text>
         <View style={styles.statGrid}>
           <StatCard label="Members" value={t.users} accent={colors.brand} testID="stat-members" />

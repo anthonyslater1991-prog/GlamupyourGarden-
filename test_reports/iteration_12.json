@@ -1,0 +1,38 @@
+{
+  "summary": "V12 — Admin AI Redesign Sandbox + Ask Bloom home shortcut. Backend pytest (test_v12_sandbox.py): 4/4 PASSED. (1) POST /api/admin/sandbox-redesign without token → 403 (FastAPI HTTPBearer). (2) POST as a fresh non-admin customer → 403 'Admins only'. (3) Full happy-path as admin: uploaded a real 64×64 JPG via /api/upload, called /admin/sandbox-redesign with rich filters (changes, style=Modern, garden_type=Zen, mood=Tranquil, colour_scheme='Whites & pastels', ornaments=[Water feature, Pergola], wishlist=[Weber BBQ, rattan sofa], must_haves='keep the old oak tree', notes='TEST_v12 sandbox call'). Response returned {image_path, prompt, hotspots}; image_path starts with 'APP/sandbox/'; prompt string contains EVERY filter value we passed (asserted for style/changes/garden_type/mood/colour_scheme/ornaments/wishlist/must_haves/notes). Fetched the generated image via GET /api/files/{path} → 200, content-type image/*, >100 bytes served — confirming the sandbox indexes into uploads collection so /files can serve it. Crucially: /admin/projects count and total design_count were IDENTICAL before and after the sandbox call — NO project created, NO design persisted (matches spec). (4) Missing original_path → 422 (Pydantic). Real Gemini image call completed in ~14s.\n\nFrontend Playwright (mobile 390x844): (a) Home Ask Bloom card [data-testid=ask-bloom] is present and tapping it navigates to /chat (chat assistant renders 'Hi, I\\'m Bloom!' with suggestion chips). (b) Admin dashboard has the new [data-testid=open-admin-sandbox] card ('AI Redesign Sandbox 🧪 — Test AI output & prompts — nothing is saved'); tapping opens /admin/sandbox. (c) Sandbox screen renders correctly: info banner 'Nothing here is saved as a project or design', two photo pickers (sandbox-camera / sandbox-library), all chip groups (chip-Add flowers, chip-Modern, chip-Zen, etc.), text inputs (sandbox-wishlist, sandbox-musthaves, sandbox-notes), back-sandbox and sandbox-generate CTA. (d) sandbox-generate is correctly disabled (opacity 0.5, aria-disabled=true) until a photo is chosen. The generate + copy-prompt + before/after toggle logic in code is straightforward and matches the working /projects/{id}/redesign flow; because expo-image-picker cannot be driven in web preview without a file dialog, the actual generate UI flow was not tapped through end-to-end from Playwright — but the identical backend endpoint was fully exercised and the frontend code path is verified (fileUrl(result.image_path) preview, Clipboard.setStringAsync, showBefore toggle).\n\nWeekly Poll modal on home briefly blocks taps until dismissed (Escape works). No blocking bugs. All acceptance criteria met.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [],
+    "react_native_issues": [
+      {"component": "shadow* style props (RN Web deprecation)", "issue": "Console warns repeatedly: '\"shadow*\" style props are deprecated. Use \"boxShadow\".' Non-blocking cosmetic warning on web. Same as v11."},
+      {"component": "props.pointerEvents (RN Web deprecation)", "issue": "Console warns: 'props.pointerEvents is deprecated. Use style.pointerEvents' during modal usage. Non-blocking. Same as v11."}
+    ]
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_v12_sandbox.py",
+    "/app/test_reports/pytest/v12_results.xml"
+  ],
+  "action_items": [
+    "Optional: verify actual sandbox generate on a real device/emulator — Playwright web preview can't drive expo-image-picker's native file dialog reliably; UI code path (upload → apiFetch → setResult → fileUrl preview → toggle → copy-prompt) matches the proven /projects/{id}/redesign flow so this is low risk.",
+    "Optional (cosmetic, carried over from v11): migrate shadow* → boxShadow and move pointerEvents into style to silence RN-web deprecation console warnings."
+  ],
+  "critical_code_review_comments": [
+    "server.py sandbox_redesign checks role BEFORE any DB read → 403 fires early and is safe (verified by non-admin 403 test). Uses SandboxRedesignInput(RedesignInput) with an added required original_path — correct: keeps prompt shape identical to production redesign.",
+    "server.py sandbox stores at APP/sandbox/{user}/... (separate prefix from /uploads/) and inserts an uploads doc with sandbox:true — good hygiene, lets /files serve the image without polluting projects. Does NOT push into any project.designs array (verified by count-before/count-after).",
+    "server.py build_redesign_prompt is shared between /projects/{id}/redesign and /admin/sandbox-redesign — single source of truth. Verified the exact same string is returned to the sandbox client (all 9 filter values echoed).",
+    "frontend admin/sandbox.tsx: guarded with useEffect(() => if(user && user.role !== 'admin') router.replace('/(tabs)')) — good client-side gate (backend is still authoritative). Uses uploadImage → apiFetch('/admin/sandbox-redesign'), same helpers as the production redesign screen. Copy-prompt uses expo-clipboard — correct.",
+    "frontend admin/index.tsx: 'open-admin-sandbox' card visually consistent with existing 'open-admin-map' entry — good UX.",
+    "frontend (tabs)/index.tsx ask-bloom card uses router.push('/chat') — matches existing /app/chat.tsx screen."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_v12_sandbox.py (new)"
+  ],
+  "success_rate": {"backend": "100% (4/4)", "frontend": "100% on 4 UI phases (ask-bloom → /chat, admin sandbox link, sandbox screen render + all testIDs, generate disabled without photo)"},
+  "seed_data_creation": "Registered one fresh TEST_sandbox_cust_*@example.com customer for the non-admin 403 test. Sandbox call created ONE uploads doc (APP/uploads/... for the source jpg) and ONE uploads doc (APP/sandbox/... for the generated image) — both under admin's user_id — this is the intended behaviour and by spec does NOT touch db.projects.",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "V12 (Admin AI Sandbox + Ask Bloom card) is production-ready. The sandbox endpoint reuses the exact same Gemini prompt/model as /projects/{id}/redesign — if that flow breaks, sandbox will too. When testing next iterations, note that /admin/sandbox-redesign now inserts into db.uploads with a 'sandbox: true' flag — if a future cleanup tool wants to purge sandbox artefacts, filter on that. Weekly Poll modal on home autopops and briefly intercepts taps: dismiss it (Escape works) before tapping ask-bloom in scripted tests.",
+  "rca_of_issue": "N/A — feature verified working as designed."
+}
