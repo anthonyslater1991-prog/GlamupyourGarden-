@@ -1,5 +1,5 @@
 import React from "react";
-import { View, Text, StyleSheet, Modal, Pressable, ScrollView } from "react-native";
+import { View, Text, StyleSheet, Modal, Pressable, ScrollView, ActivityIndicator } from "react-native";
 import { Image } from "expo-image";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { Feather } from "@expo/vector-icons";
@@ -17,6 +17,8 @@ export default function CompareModal({
   segments,
   activeSegment,
   onSegment,
+  onShare,
+  sharing,
 }: {
   visible: boolean;
   onClose: () => void;
@@ -26,6 +28,8 @@ export default function CompareModal({
   segments?: Segment[];
   activeSegment?: string;
   onSegment?: (key: string) => void;
+  onShare?: () => void;
+  sharing?: boolean;
 }) {
   const insets = useSafeAreaInsets();
   return (
@@ -33,6 +37,18 @@ export default function CompareModal({
       <View style={[styles.root, { paddingTop: insets.top + spacing.sm }]}>
         <View style={styles.header}>
           <Text style={styles.title} numberOfLines={1}>{title}</Text>
+          {onShare && (
+            <Pressable testID="compare-share" style={styles.shareBtn} onPress={onShare} disabled={sharing} hitSlop={8}>
+              {sharing ? (
+                <ActivityIndicator size="small" color="#fff" />
+              ) : (
+                <>
+                  <Feather name="share-2" size={15} color="#fff" />
+                  <Text style={styles.shareBtnText}>Share</Text>
+                </>
+              )}
+            </Pressable>
+          )}
           <Pressable testID="compare-close" style={styles.closeBtn} onPress={onClose} hitSlop={10}>
             <Feather name="x" size={22} color="#fff" />
           </Pressable>
@@ -95,6 +111,8 @@ const styles = StyleSheet.create({
   header: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", paddingVertical: spacing.sm, paddingHorizontal: spacing.xs },
   title: { flex: 1, fontFamily: fonts.display, fontSize: 20, color: "#fff" },
   closeBtn: { width: 40, height: 40, alignItems: "center", justifyContent: "center" },
+  shareBtn: { flexDirection: "row", alignItems: "center", gap: 6, backgroundColor: colors.brand, borderRadius: radius.pill, paddingVertical: 8, paddingHorizontal: spacing.md, marginRight: spacing.sm, minWidth: 44, minHeight: 36, justifyContent: "center" },
+  shareBtnText: { color: "#fff", fontFamily: fonts.text, fontWeight: "700", fontSize: 13 },
   segmentRow: { flexDirection: "row", backgroundColor: "rgba(255,255,255,0.1)", borderRadius: radius.pill, padding: 4, marginVertical: spacing.sm, alignSelf: "center" },
   segment: { paddingVertical: 8, paddingHorizontal: spacing.lg, borderRadius: radius.pill },
   segmentOn: { backgroundColor: colors.brand },

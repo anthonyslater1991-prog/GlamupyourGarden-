@@ -122,6 +122,14 @@ Garden makeover app: users photograph their garden, choose changes, and generate
 - Reviews now store author_id for reliable future cleanup.
 - Verified on preview: users=admin+Mary only; visits/reports/contracts/posts=0; stats & overview visitors all 0.
 
+## Implemented (2026-06 fork) — iteration 17: Share Makeover + Favourite + Reel Auto-Play + Sandbox Notes
+- Share A Makeover: backend POST /api/projects/{id}/share-image composes a branded BEFORE|AFTER PNG (Pillow, compose_before_after in routes_projects.py), stores it, returns image_path. Frontend "Share" button in customer Compare modal (CompareModal onShare/sharing) — native share sheet via expo-sharing + expo-file-system/legacy download; web uses navigator.share(files) / anchor download.
+- Favourite A Version: backend POST /api/projects/{id}/designs/{did}/favourite {favourite}. Star toggle on main image; favourited designs sort to front of reel with star badge; version labels stay tied to creation order.
+- Reel Auto-Play: Play/Stop button steps original→v1→…→latest with an Animated fade.
+- Sandbox Notes: presets now carry an optional note (client-side AsyncStorage), shown under each recipe chip.
+- Verified: backend pytest 10/10 (tests/test_v14_features.py) + full frontend flows (iteration_14 report). Packages added: expo-sharing, expo-file-system.
+
+
 ## Implemented (2026-06 fork) — iteration 16: Compare/Reel + Sandbox Presets + Backend refactor
 - Customer Compare + Version Reel (project screen): horizontal reel of every redesign (Before, v1, v2...); tap a snapshot to view it; "Compare" button opens a side-by-side CompareModal with a "vs Original" / "vs Previous" toggle. New reusable component src/components/CompareModal.tsx.
 - Admin Sandbox Prompt Presets: save/load/delete named filter recipes (stored client-side via AsyncStorage, key glam_sandbox_presets) so recipes can be re-run instantly.

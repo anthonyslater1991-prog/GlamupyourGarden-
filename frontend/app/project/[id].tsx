@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import {
   View,
   Text,
@@ -10,6 +10,7 @@ import {
   Modal,
   Linking,
   Platform,
+  Animated,
   useWindowDimensions,
 } from "react-native";
 import { Image } from "expo-image";
@@ -19,6 +20,8 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { Feather } from "@expo/vector-icons";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import * as Haptics from "expo-haptics";
+import * as Sharing from "expo-sharing";
+import * as FileSystem from "expo-file-system/legacy";
 import { apiFetch, fileUrl } from "@/src/lib/api";
 import { useAuth } from "@/src/context/AuthContext";
 import { storage } from "@/src/utils/storage";
@@ -37,7 +40,7 @@ const COLOUR_SCHEMES = ["Green & natural", "Blues & purples", "Warm sunset", "Wh
 const ORNAMENTS = ["Water feature", "Statues & ornaments", "Pergola", "Fire pit", "Raised beds", "Bird bath", "Garden lighting", "Decking"];
 
 type Hotspot = { id: string; name: string; description: string; price: string; retailer: string; url: string; x: number; y: number };
-type Design = { id: string; image_path: string; changes: string[]; style?: string; hotspots: Hotspot[]; saved: boolean };
+type Design = { id: string; image_path: string; changes: string[]; style?: string; hotspots: Hotspot[]; saved: boolean; favourite?: boolean };
 type Project = { id: string; title: string; original_path: string; designs: Design[]; gallery?: { id: string; image_path: string; note?: string }[] };
 
 export default function ProjectViewer() {
@@ -68,6 +71,10 @@ export default function ProjectViewer() {
   const [addingPrice, setAddingPrice] = useState(false);
   const [compareOpen, setCompareOpen] = useState(false);
   const [compareMode, setCompareMode] = useState<"original" | "previous">("original");
+  const [sharing, setSharing] = useState(false);
+  const [playing, setPlaying] = useState(false);
+  const playRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const fade = useRef(new Animated.Value(1)).current;
 
   useEffect(() => {
     if (activeHotspot) {
@@ -112,6 +119,91 @@ export default function ProjectViewer() {
   }, [id]);
 
   useEffect(() => { if (!authLoading) load(); }, [load, authLoading]);
+
+  // Clean up the auto-play timer on unmount.
+  useEffect(() => () => { if (playRef.current) clearInterval(playRef.current); }, []);
+
+  const flash = useCallback(() => {
+    fade.setValue(0.3);
+    Animated.timing(fade, { toValue: 1, duration: 480, useNativeDriver: true }).start();
+  }, [fade]);
+
+  const stopPlay = useCallback(() => {
+    if (playRef.current) { clearInterval(playRef.current); playRef.current = null; }
+    setPlaying(false);
+  }, []);
+
+  const toggleFavourite = async (design: Design) => {
+    if (Platform.OS !== "web") Haptics.selectionAsync();
+    const fav = !design.favourite;
+    setProject((p) => (p ? { ...p, designs: p.designs.map((d) => (d.id === design.id ? { ...d, favourite: fav } : d)) } : p));
+    setCurrent((c) => (c && c.id === design.id ? { ...c, favourite: fav } : c));
+    try {
+      await apiFetch(`/projects/${id}/designs/${design.id}/favourite`, { method: "POST", body: { favourite: fav } });
+      if (fav) toast.show("Pinned to the top of your reel ⭐", "success");
+    } catch (e: any) {
+      toast.show(e.message || "Couldn't update", "error");
+    }
+  };
+
+  const shareMakeover = async () => {
+    const target = current || (project?.designs?.length ? project.designs[project.designs.length - 1] : null);
+    if (!target || !project) { toast.show("Create a redesign first ✨", "error"); return; }
+    try {
+      setSharing(true);
+      const r = await apiFetch<{ image_path: string }>(`/projects/${id}/share-image`, { method: "POST", body: { design_id: target.id } });
+      const url = fileUrl(r.image_path);
+      if (Platform.OS === "web") {
+        const resp = await fetch(url);
+        const blob = await resp.blob();
+        const file = new File([blob], "garden-makeover.png", { type: "image/png" });
+        const nav: any = navigator;
+        if (nav.canShare && nav.canShare({ files: [file] })) {
+          await nav.share({ files: [file], title: "My Garden Makeover", text: "My garden makeover, made with Glam up your Garden ✨" });
+        } else {
+          const a = document.createElement("a");
+          a.href = URL.createObjectURL(blob);
+          a.download = "garden-makeover.png";
+          a.click();
+          toast.show("Image downloaded — share it anywhere 📤", "success");
+        }
+      } else {
+        const local = `${FileSystem.cacheDirectory}garden-makeover-${Date.now()}.png`;
+        const dl = await FileSystem.downloadAsync(url, local);
+        if (await Sharing.isAvailableAsync()) {
+          await Sharing.shareAsync(dl.uri, { mimeType: "image/png", dialogTitle: "Share your garden makeover" });
+        } else {
+          toast.show("Sharing isn't available on this device", "error");
+        }
+      }
+    } catch (e: any) {
+      toast.show(e.message || "Couldn't create your share image", "error");
+    } finally {
+      setSharing(false);
+    }
+  };
+
+  const playReel = () => {
+    if (!project) return;
+    const ds = project.designs || [];
+    if (ds.length < 1) return;
+    if (playing) { stopPlay(); return; }
+    if (Platform.OS !== "web") Haptics.selectionAsync();
+    setPlaying(true);
+    const applyFrame = (i: number) => {
+      if (i === 0) { setShowBefore(true); }
+      else { setShowBefore(false); setCurrent(ds[i - 1]); setShowHotspots(false); }
+      flash();
+    };
+    let idx = 0;
+    applyFrame(0);
+    playRef.current = setInterval(() => {
+      idx += 1;
+      if (idx > ds.length) { stopPlay(); return; }
+      applyFrame(idx);
+    }, 1150);
+  };
+
 
   // Merge any products the AI assistant queued into the wishlist.
   useEffect(() => {
@@ -226,6 +318,13 @@ export default function ProjectViewer() {
   const displayUri = fileUrl(displayPath);
 
   const designs = project.designs || [];
+  const orderIndex = new Map(designs.map((d, i) => [d.id, i] as const));
+  const reelDesigns = [...designs].sort((a, b) => {
+    const fa = a.favourite ? 1 : 0;
+    const fb = b.favourite ? 1 : 0;
+    if (fa !== fb) return fb - fa;
+    return (orderIndex.get(a.id) ?? 0) - (orderIndex.get(b.id) ?? 0);
+  });
   const compareTarget = current || (designs.length ? designs[designs.length - 1] : null);
   const compareTargetIndex = compareTarget ? designs.findIndex((d) => d.id === compareTarget.id) : -1;
   const compareRight = compareTarget
@@ -260,7 +359,9 @@ export default function ProjectViewer() {
         {/* Image viewer */}
         <View style={[styles.imageWrap, { height: imgH, marginHorizontal: spacing.lg }]}>
           {displayUri ? (
-            <Image source={{ uri: displayUri }} style={StyleSheet.absoluteFill} contentFit="cover" />
+            <Animated.View style={[StyleSheet.absoluteFill, { opacity: fade }]}>
+              <Image source={{ uri: displayUri }} style={StyleSheet.absoluteFill} contentFit="cover" />
+            </Animated.View>
           ) : (
             <View style={[StyleSheet.absoluteFill, styles.placeholder]}>
               <Feather name="image" size={40} color={colors.muted} />
@@ -313,6 +414,16 @@ export default function ProjectViewer() {
               <Feather name={showHotspots ? "shopping-bag" : "eye-off"} size={15} color="#fff" />
             </Pressable>
           )}
+
+          {current && !showBefore && (
+            <Pressable
+              testID="favourite-toggle"
+              style={styles.favToggle}
+              onPress={() => toggleFavourite(current)}
+            >
+              <Feather name="star" size={15} color={current.favourite ? "#FFC53D" : "#fff"} />
+            </Pressable>
+          )}
         </View>
 
         {current && !showBefore && showHotspots && (
@@ -324,10 +435,16 @@ export default function ProjectViewer() {
           <View style={styles.reelSection}>
             <View style={styles.reelHeader}>
               <Text style={styles.reelTitle}>Your garden&apos;s journey 🎞️</Text>
-              <Pressable testID="open-compare" style={styles.compareBtn} onPress={() => { setCompareMode("original"); setCompareOpen(true); }}>
-                <Feather name="columns" size={14} color={colors.brand} />
-                <Text style={styles.compareBtnText}>Compare</Text>
-              </Pressable>
+              <View style={styles.reelActions}>
+                <Pressable testID="play-reel" style={styles.playBtn} onPress={playReel}>
+                  <Feather name={playing ? "pause" : "play"} size={14} color="#fff" />
+                  <Text style={styles.playBtnText}>{playing ? "Stop" : "Play"}</Text>
+                </Pressable>
+                <Pressable testID="open-compare" style={styles.compareBtn} onPress={() => { setCompareMode("original"); setCompareOpen(true); }}>
+                  <Feather name="columns" size={14} color={colors.brand} />
+                  <Text style={styles.compareBtnText}>Compare</Text>
+                </Pressable>
+              </View>
             </View>
             <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: spacing.sm, paddingHorizontal: spacing.lg }}>
               <ReelThumb
@@ -336,17 +453,18 @@ export default function ProjectViewer() {
                 active={showBefore}
                 onPress={() => { if (Platform.OS !== "web") Haptics.selectionAsync(); setShowBefore(true); }}
               />
-              {designs.map((d, i) => (
+              {reelDesigns.map((d) => (
                 <ReelThumb
                   key={d.id}
                   uri={fileUrl(d.image_path)}
-                  label={`v${i + 1}`}
+                  label={`v${(orderIndex.get(d.id) ?? 0) + 1}`}
                   active={!showBefore && current?.id === d.id}
+                  favourite={!!d.favourite}
                   onPress={() => { if (Platform.OS !== "web") Haptics.selectionAsync(); setCurrent(d); setShowBefore(false); setShowHotspots(true); }}
                 />
               ))}
             </ScrollView>
-            <Text style={styles.reelHint}>Tap a snapshot to view it · tap Compare to see it side-by-side ✨</Text>
+            <Text style={styles.reelHint}>Tap ⭐ on a design to pin it · Play to watch the transformation ✨</Text>
           </View>
         )}
 
@@ -607,16 +725,23 @@ export default function ProjectViewer() {
         onSegment={(k) => setCompareMode(k as "original" | "previous")}
         left={compareLeft}
         right={compareRight}
+        onShare={shareMakeover}
+        sharing={sharing}
       />
     </View>
   );
 }
 
-function ReelThumb({ uri, label, active, onPress }: { uri?: string; label: string; active: boolean; onPress: () => void }) {
+function ReelThumb({ uri, label, active, favourite, onPress }: { uri?: string; label: string; active: boolean; favourite?: boolean; onPress: () => void }) {
   return (
     <Pressable testID={`reel-${label}`} onPress={onPress} style={styles.reelItem}>
       <View style={[styles.reelThumbWrap, active && styles.reelThumbActive]}>
         {uri ? <Image source={{ uri }} style={StyleSheet.absoluteFill} contentFit="cover" /> : null}
+        {favourite ? (
+          <View style={styles.reelStar}>
+            <Feather name="star" size={11} color="#1B241E" />
+          </View>
+        ) : null}
       </View>
       <Text style={[styles.reelLabel, active && styles.reelLabelActive]} numberOfLines={1}>{label}</Text>
     </Pressable>
@@ -639,9 +764,14 @@ const styles = StyleSheet.create({
   toggle: { position: "absolute", bottom: spacing.md, alignSelf: "center", flexDirection: "row", alignItems: "center", gap: 6, backgroundColor: "rgba(255,255,255,0.92)", paddingVertical: spacing.sm, paddingHorizontal: spacing.lg, borderRadius: radius.pill },
   toggleText: { fontFamily: fonts.text, fontWeight: "700", color: colors.onSurface, fontSize: 13 },
   eyeToggle: { position: "absolute", bottom: spacing.md, right: spacing.md, width: 38, height: 38, borderRadius: 19, backgroundColor: colors.brand, alignItems: "center", justifyContent: "center" },
+  favToggle: { position: "absolute", bottom: spacing.md, right: spacing.md + 46, width: 38, height: 38, borderRadius: 19, backgroundColor: "rgba(27,36,30,0.7)", alignItems: "center", justifyContent: "center" },
   shopHint: { fontFamily: fonts.text, color: colors.muted, textAlign: "center", marginTop: spacing.md, fontSize: 13 },
   reelSection: { marginTop: spacing.lg, gap: spacing.sm },
   reelHeader: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", paddingHorizontal: spacing.lg },
+  reelActions: { flexDirection: "row", alignItems: "center", gap: spacing.sm },
+  playBtn: { flexDirection: "row", alignItems: "center", gap: 6, backgroundColor: colors.brand, borderRadius: radius.pill, paddingVertical: 7, paddingHorizontal: spacing.md },
+  playBtnText: { fontFamily: fonts.text, fontWeight: "700", color: "#fff", fontSize: 13 },
+  reelStar: { position: "absolute", top: 4, right: 4, width: 20, height: 20, borderRadius: 10, backgroundColor: "#FFC53D", alignItems: "center", justifyContent: "center" },
   reelTitle: { fontFamily: fonts.display, fontSize: 17, color: colors.onSurface },
   compareBtn: { flexDirection: "row", alignItems: "center", gap: 6, borderWidth: 1.5, borderColor: colors.brand, borderRadius: radius.pill, paddingVertical: 6, paddingHorizontal: spacing.md },
   compareBtnText: { fontFamily: fonts.text, fontWeight: "700", color: colors.brand, fontSize: 13 },

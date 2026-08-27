@@ -47,7 +47,7 @@ type Filters = {
   mustHaves: string;
   notes: string;
 };
-type Preset = { id: string; name: string; filters: Filters };
+type Preset = { id: string; name: string; note?: string; filters: Filters };
 
 const PRESETS_KEY = "glam_sandbox_presets";
 
@@ -74,6 +74,7 @@ export default function AdminSandbox() {
   const [presets, setPresets] = useState<Preset[]>([]);
   const [saveOpen, setSaveOpen] = useState(false);
   const [presetName, setPresetName] = useState("");
+  const [presetNote, setPresetNote] = useState("");
   const [compareOpen, setCompareOpen] = useState(false);
 
   const result = results[0] || null;
@@ -105,10 +106,11 @@ export default function AdminSandbox() {
   const savePreset = async () => {
     const name = presetName.trim();
     if (!name) return;
-    const next = [{ id: `p_${Date.now()}`, name, filters: currentFilters() }, ...presets].slice(0, 20);
+    const next = [{ id: `p_${Date.now()}`, name, note: presetNote.trim() || undefined, filters: currentFilters() }, ...presets].slice(0, 20);
     setPresets(next);
     await storage.setItem(PRESETS_KEY, next);
     setPresetName("");
+    setPresetNote("");
     setSaveOpen(false);
     toast.show(`Recipe "${name}" saved 📌`, "success");
   };
@@ -225,8 +227,9 @@ export default function AdminSandbox() {
             <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: spacing.sm }}>
               {presets.map((p) => (
                 <View key={p.id} style={styles.presetChip}>
-                  <Pressable testID={`preset-${p.name}`} onPress={() => { applyFilters(p.filters); toast.show(`Recipe "${p.name}" loaded`, "success"); }}>
-                    <Text style={styles.presetChipText}>{p.name}</Text>
+                  <Pressable testID={`preset-${p.name}`} onPress={() => { applyFilters(p.filters); toast.show(`Recipe "${p.name}" loaded`, "success"); }} style={{ maxWidth: 180 }}>
+                    <Text style={styles.presetChipText} numberOfLines={1}>{p.name}</Text>
+                    {!!p.note && <Text style={styles.presetChipNote} numberOfLines={1}>{p.note}</Text>}
                   </Pressable>
                   <Pressable testID={`preset-del-${p.name}`} hitSlop={6} onPress={() => deletePreset(p.id)}>
                     <Feather name="x" size={13} color={colors.muted} />
@@ -372,8 +375,17 @@ export default function AdminSandbox() {
               onChangeText={setPresetName}
               autoFocus
             />
+            <TextInput
+              testID="preset-note-input"
+              style={[styles.input, { height: 72, paddingTop: spacing.md }]}
+              placeholder="Note — why this prompt worked well (optional)"
+              placeholderTextColor={colors.muted}
+              value={presetNote}
+              onChangeText={setPresetNote}
+              multiline
+            />
             <View style={styles.saveActions}>
-              <Pressable style={styles.saveCancel} onPress={() => { setSaveOpen(false); setPresetName(""); }}>
+              <Pressable style={styles.saveCancel} onPress={() => { setSaveOpen(false); setPresetName(""); setPresetNote(""); }}>
                 <Text style={styles.saveCancelText}>Cancel</Text>
               </Pressable>
               <Pressable testID="preset-save-confirm" style={[styles.saveConfirm, !presetName.trim() && styles.ctaDisabled]} onPress={savePreset} disabled={!presetName.trim()}>
@@ -459,6 +471,7 @@ const styles = StyleSheet.create({
   helperMuted: { fontFamily: fonts.text, color: colors.muted, fontSize: 12, lineHeight: 17 },
   presetChip: { flexDirection: "row", alignItems: "center", gap: 6, backgroundColor: "#EFF4EE", borderRadius: radius.pill, paddingVertical: 8, paddingHorizontal: spacing.md },
   presetChipText: { fontFamily: fonts.text, fontWeight: "700", color: colors.brand, fontSize: 13 },
+  presetChipNote: { fontFamily: fonts.text, color: colors.onSurfaceSecondary, fontSize: 11, marginTop: 1 },
   compareBar: { flexDirection: "row", alignItems: "center", justifyContent: "center", gap: spacing.sm, backgroundColor: colors.brandSecondary, height: 48, borderRadius: radius.md },
   compareBarText: { color: "#fff", fontFamily: fonts.text, fontWeight: "700", fontSize: 14 },
   modalOverlay: { flex: 1, backgroundColor: "rgba(42,54,46,0.55)", justifyContent: "center", padding: spacing.xl },
