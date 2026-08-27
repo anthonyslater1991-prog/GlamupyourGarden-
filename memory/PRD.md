@@ -113,6 +113,15 @@ Garden makeover app: users photograph their garden, choose changes, and generate
 - Install/QR link fixed to the real app URL: web uses window.location.origin; native uses EXPO_PUBLIC_APP_URL (prod https://outdoor-uplift.emergent.host) fallback. (Previously pointed at the backend URL.)
 - Verified: tapping Share copies "🌿 Check out Glam up your Garden … Save it to your home screen: <url>".
 
+## Implemented (2026-06 fork) — iteration 14: Launch prep / demo cleanup
+- Admin-only endpoint POST /api/admin/cleanup-demo + Admin Dashboard "Launch tools → Clean demo data" (tap twice to confirm).
+- Removes ALL @example.com test accounts (never admin, never real domains like Mary/hotmail) + their projects, contracts, payments, wall posts, room messages, DMs, sessions, and test reviews (TEST_/automation names). Recomputes each contractor's rating/review_count.
+- Zeroes the visit/view counters (clears `visits`) and clears moderation `reports` — so counters read 0 until launch. Re-runnable anytime (run again right before going live).
+- Demo contractor listings KEPT (reset to 0 reviews, unclaimed). Generic weekly polls kept.
+- Removed the "Test mode — use card 4242…" hint from the payments UI. Payments still Stripe TEST mode until real live keys added.
+- Reviews now store author_id for reliable future cleanup.
+- Verified on preview: users=admin+Mary only; visits/reports/contracts/posts=0; stats & overview visitors all 0.
+
 ## Backlog
 ### P1
 - Real member-to-member messaging + community chat room (opt-out aware)

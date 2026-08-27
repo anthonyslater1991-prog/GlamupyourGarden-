@@ -138,6 +138,21 @@ export default function AdminDashboard() {
     finally { setReleaseBusy(null); }
   };
 
+  const [cleanupConfirm, setCleanupConfirm] = useState(false);
+  const [cleanupBusy, setCleanupBusy] = useState(false);
+  const cleanupDemo = async () => {
+    if (!cleanupConfirm) { setCleanupConfirm(true); return; }
+    setCleanupBusy(true);
+    try {
+      const r = await apiFetch<{ removed: any }>("/admin/cleanup-demo", { method: "POST", body: { confirm: true } });
+      const rm = r.removed || {};
+      toast.show(`Cleaned: ${rm.users || 0} test users, ${rm.wall_posts || 0} posts, ${rm.contracts || 0} agreements removed ✅`, "success");
+      setCleanupConfirm(false);
+      load();
+    } catch (e: any) { toast.show(e.message, "error"); }
+    finally { setCleanupBusy(false); }
+  };
+
   const activatePoll = async (id: string) => {
     try {
       await apiFetch(`/admin/polls/${id}/activate`, { method: "POST" });
@@ -314,6 +329,16 @@ export default function AdminDashboard() {
             </View>
           ))
         )}
+
+        {/* Go live — remove demo/test data */}
+        <Text style={styles.sectionTitle}>Launch tools 🚀</Text>
+        <View style={styles.reportCard}>
+          <Text style={styles.reportName}>Clean demo &amp; test data</Text>
+          <Text style={styles.reportMeta}>Removes all seeded test accounts (@example.com) and their posts, chats, projects &amp; agreements. Real customers and this admin account are never touched.</Text>
+          <Pressable testID="cleanup-demo" style={[styles.actionBtn, styles.suspendBtn, { alignSelf: "flex-start" }]} onPress={cleanupDemo} disabled={cleanupBusy}>
+            {cleanupBusy ? <ActivityIndicator size="small" color="#fff" /> : (<><Feather name={cleanupConfirm ? "alert-triangle" : "trash-2"} size={13} color="#fff" /><Text style={styles.suspendText}>{cleanupConfirm ? "Tap again to confirm" : "Clean demo data"}</Text></>)}
+          </Pressable>
+        </View>
 
         {/* Reports */}
         <Text style={styles.sectionTitle}>Member reports 🚩</Text>

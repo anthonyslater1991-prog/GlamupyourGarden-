@@ -277,6 +277,10 @@ class SettingsInput(BaseModel):
     platform_fee_percent: float
 
 
+class CleanupInput(BaseModel):
+    confirm: bool = False
+
+
 # ---------------------------------------------------------------------------
 # Auth helpers
 # ---------------------------------------------------------------------------
@@ -880,6 +884,7 @@ async def add_review(contractor_id: str, body: ReviewCreate, user: dict = Depend
     review = {
         "id": new_id("rev"),
         "contractor_id": contractor_id,
+        "author_id": user["user_id"],
         "author_name": user.get("name") or "Customer",
         "rating": max(1, min(5, body.rating)),
         "text": body.text,
@@ -2519,10 +2524,71 @@ async def startup():
         logger.info("seeded preset polls")
 
 
+@api_router.post("/admin/cleanup-demo")
+async def cleanup_demo(body: CleanupInput, user: dict = Depends(get_current_user)):
+    """Admin-only: remove seeded/test accounts (@example.com) and all their content.
+    NEVER touches the admin account or real users (e.g. real email domains like Mary's)."""
+    if user.get("role") != "admin":
+        raise HTTPException(status_code=403, detail="Admins only")
+    if not body.confirm:
+        raise HTTPException(status_code=400, detail="Set confirm=true to run cleanup")
+
+    # Test accounts = anyone on @example.com, excluding the admin account.
+    test_users = await db.users.find(
+        {"email": {"$regex": r"@example\.com$", "$options": "i"}, "role": {"$ne": "admin"}},
+        {"user_id": 1, "email": 1, "_id": 0},
+    ).to_list(1000)
+    ids = [u["user_id"] for u in test_users]
+    emails = [u["email"] for u in test_users]
+
+    removed = {"users": 0, "projects": 0, "contracts": 0, "payments": 0,
+               "wall_posts": 0, "room_messages": 0, "messages": 0, "sessions": 0, "reviews": 0,
+               "visits": 0, "reports": 0}
+
+    # Reset the visit/view counters to zero (until launch) and clear test moderation reports.
+    removed["visits"] = (await db.visits.delete_many({})).deleted_count
+    removed["reports"] = (await db.reports.delete_many({})).deleted_count
+
+    if ids:
+        removed["sessions"] = (await db.user_sessions.delete_many({"user_id": {"$in": ids}})).deleted_count
+        removed["projects"] = (await db.projects.delete_many({"owner_id": {"$in": ids}})).deleted_count
+        removed["contracts"] = (await db.contracts.delete_many({"customer_id": {"$in": ids}})).deleted_count
+        removed["payments"] = (await db.payment_transactions.delete_many({"user_id": {"$in": ids}})).deleted_count
+        removed["wall_posts"] = (await db.wall_posts.delete_many({"$or": [{"author_id": {"$in": ids}}, {"user_id": {"$in": ids}}]})).deleted_count
+        removed["room_messages"] = (await db.room_messages.delete_many({"sender_id": {"$in": ids}})).deleted_count
+        removed["messages"] = (await db.messages.delete_many({"$or": [{"sender_id": {"$in": ids}}, {"receiver_id": {"$in": ids}}]})).deleted_count
+        removed["reviews"] = (await db.reviews.delete_many({"$or": [{"author_id": {"$in": ids}}, {"author_name": {"$in": emails}}]})).deleted_count
+        # Free up any contractor listings claimed by test accounts (keep the listing itself)
+        await db.contractors.update_many(
+            {"claimed_by": {"$in": ids}},
+            {"$set": {"claim_status": "unclaimed"},
+             "$unset": {"claimed_by": "", "claim_user_id": "", "claim_user_name": "",
+                        "stripe_account_id": "", "payouts_enabled": "", "charges_enabled": "", "onboarding_status": ""}},
+        )
+        removed["users"] = (await db.users.delete_many({"user_id": {"$in": ids}})).deleted_count
+
+    # Purge obvious automation/test reviews (by tag/name) regardless of author link
+    tag_removed = (await db.reviews.delete_many({"$or": [
+        {"text": {"$regex": r"^\s*TEST_", "$options": "i"}},
+        {"author_name": {"$in": ["Test Gardener", "Test Customer", "Automation", "QA Tester"]}},
+    ]})).deleted_count
+    removed["reviews"] += tag_removed
+
+    # Recompute rating/review_count for every contractor from remaining reviews
+    async for con in db.contractors.find({}, {"id": 1, "_id": 0}):
+        revs = await db.reviews.find({"contractor_id": con["id"]}).to_list(1000)
+        if revs:
+            avg = round(sum(r["rating"] for r in revs) / len(revs), 1)
+            await db.contractors.update_one({"id": con["id"]}, {"$set": {"rating": avg, "review_count": len(revs)}})
+        else:
+            await db.contractors.update_one({"id": con["id"]}, {"$set": {"rating": 0, "review_count": 0}})
+
+    return {"ok": True, "removed": removed, "protected": "admin + any non-@example.com user (e.g. real customers)"}
+
+
 @app.on_event("shutdown")
 async def shutdown():
     client.close()
-
 
 @api_router.get("/")
 async def root():

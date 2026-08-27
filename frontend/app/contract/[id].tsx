@@ -456,7 +456,7 @@ export default function ContractScreen() {
         {depositReady && !amProSide && (c.milestones?.length ? true : false) && (
           <View style={styles.card}>
             <Text style={styles.cardHead}>Payments 💷</Text>
-            <Text style={styles.clauseHint}>Pay each stage upfront — funds are held safely and released to your contractor as the work is done. Test mode — use card 4242 4242 4242 4242.</Text>
+            <Text style={styles.clauseHint}>Pay each stage upfront — funds are held safely and only released to your contractor as the work is done.</Text>
             {c.milestones!.map((m) => (
               <View key={m.key} style={styles.mRow}>
                 <View style={{ flex: 1 }}>
